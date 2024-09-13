@@ -1,0 +1,22 @@
+application:
+  name: Encrypted Anonymous Note
+  version: 1.0.0
+
+server:
+  host: 148.135.99.95
+  port: 8443
+
+logging:
+  level: DEBUG
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    console: {}
+    file:
+      path: logs/application.log
+
+database:
+  user: "biu-mail"
+  password: "XGNWYhCaSsR2tCPD"
+  host: "45.59.170.113"
+  port: 3306
+  name: "biu-mail"
