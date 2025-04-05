@@ -26,17 +26,15 @@ func CheckStoragePermissions() error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Check if directory exists
-	if _, err := os.Stat(storageDir); os.IsNotExist(err) {
-		return fmt.Errorf("storage directory does not exist: %s", storageDir)
+	// Create directory if not exists
+	if err := os.MkdirAll(storageDir, 0777); err != nil {
+		return fmt.Errorf("failed to create storage directory: %v", err)
 	}
 
-	// Check if directory is writable
-	testFile := filepath.Join(storageDir, ".test")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		return fmt.Errorf("storage directory is not writable: %v", err)
+	// Ensure directory is writable
+	if err := os.Chmod(storageDir, 0777); err != nil {
+		return fmt.Errorf("failed to set storage directory permissions: %v", err)
 	}
-	_ = os.Remove(testFile)
 	return nil
 }
 
