@@ -399,15 +399,29 @@ const indexHTML = `
   <script>
     let maxFileSizeMB = 15; // 默认值，以防配置加载失败
 
-    document.addEventListener('DOMContentLoaded', async function() { // 改为 async
-      const switchType = document.getElementById('switchType');
+    // Ensure only one DOMContentLoaded listener
+    document.addEventListener('DOMContentLoaded', async function() {
+      console.log("DOM fully loaded and parsed"); // Log: DOM ready
 
-    document.addEventListener('DOMContentLoaded', async function() { // 改为 async
-      const switchType = document.getElementById('switchType');
+      const switchTypeButton = document.getElementById('switchType');
       const messageField = document.querySelector('fieldset.form-textarea');
       const messageInput = document.getElementById('message');
       const fileInput = document.getElementById('fileInput');
-      const fileField = fileInput.parentElement;
+      const fileField = fileInput ? fileInput.parentElement : null; // Check if fileInput exists
+      const form = document.querySelector('form'); // Select the form
+
+      // Log element selections
+      console.log("Elements selected:", { switchTypeButton, messageField, messageInput, fileInput, fileField, form });
+
+      if (!switchTypeButton) {
+          console.error("Switch Type button not found!");
+      }
+      if (!form) {
+          console.error("Form element not found!");
+      }
+      if (!messageField || !messageInput || !fileInput || !fileField) {
+          console.error("One or more form field elements not found!");
+      }
 
       // --- 新增：加载配置 ---
       try {
@@ -434,7 +448,10 @@ const indexHTML = `
         })
         .catch(error => console.error('Error fetching background image:', error));
 
-      switchType.addEventListener('click', function() {
+      // Add event listener for switch type button
+      if (switchTypeButton && messageField && fileField) {
+          switchTypeButton.addEventListener('click', function() {
+            console.log("Switch Type button clicked"); // Log: Switch button click
         if (messageField.style.display === 'none') {
           messageField.style.display = 'block';
           fileField.style.display = 'none';
@@ -445,6 +462,7 @@ const indexHTML = `
           this.innerHTML = '<i class="fas fa-comment-dots"></i> SWITCH_TO_MEOW_MODE';
         }
       });
+    } // <-- 添加缺失的结束花括号 for if (switchTypeButton && ...)
 
       // 检查 Web Crypto API 支持
       if (!window.crypto || !window.crypto.subtle) {
