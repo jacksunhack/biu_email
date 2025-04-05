@@ -15,7 +15,10 @@ import (
 )
 
 // 处理文件上传的Handler
-func SaveFileHandler(c *gin.Context) {
+// 全局配置变量 (假设在 main.go 中加载并赋值)
+// var config *Config
+
+func SaveFileHandler(c *gin.Context, config *Config) { // 添加 config 参数
 	log.Println("Received file upload request")
 
 	// 确保临时文件目录存在
@@ -35,7 +38,19 @@ func SaveFileHandler(c *gin.Context) {
 		return
 	}
 	defer file.Close()
-	log.Printf("File retrieved from form: %s", header.Filename)
+
+	// --- 新增：使用配置检查文件大小 ---
+	maxSize := int64(config.Server.MaxFileSizeMB) * 1024 * 1024 // 转换为字节
+	if header.Size > maxSize {
+		log.Printf("File size exceeds limit: %d > %d bytes", header.Size, maxSize)
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error": fmt.Sprintf("File size exceeds the limit of %d MB", config.Server.MaxFileSizeMB),
+		})
+		return
+	}
+	// --- 结束新增 ---
+
+	log.Printf("File retrieved from form: %s, Size: %d bytes", header.Filename, header.Size)
 
 	// 生成唯一的文件名
 	filename := uuid.New().String()

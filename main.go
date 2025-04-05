@@ -292,12 +292,31 @@ const indexHTML = `
   <!-- 浮动图标 -->
   <div class="floating-icon"><i class="fas fa-cat"></i></div>
   <script>
-    document.addEventListener('DOMContentLoaded', function() {
+    let maxFileSizeMB = 15; // 默认值，以防配置加载失败
+
+    document.addEventListener('DOMContentLoaded', async function() { // 改为 async
       const switchType = document.getElementById('switchType');
       const messageField = document.querySelector('fieldset.form-textarea');
       const messageInput = document.getElementById('message');
       const fileInput = document.getElementById('fileInput');
       const fileField = fileInput.parentElement;
+
+      // --- 新增：加载配置 ---
+      try {
+        const configResponse = await fetch('/config');
+        if (configResponse.ok) {
+          const configData = await configResponse.json();
+          if (configData.maxFileSizeMB) {
+            maxFileSizeMB = parseInt(configData.maxFileSizeMB, 10);
+            console.log('Max file size loaded from config:', maxFileSizeMB, 'MB');
+          }
+        } else {
+          console.warn('Failed to load config from server, using default max file size.');
+        }
+      } catch (error) {
+        console.error('Error fetching config:', error);
+      }
+      // --- 结束新增 ---
 
       // 获取随机二次元背景图片
       fetch('https://api.waifu.pics/sfw/waifu')
@@ -464,8 +483,10 @@ const indexHTML = `
           if (isFileMode) {
             const file = fileInput.files[0];
             if (!file) throw new Error('喵呜~ 请选择一个文件。');
-            if (file.size > 15 * 1024 * 1024) {
-              throw new Error('喵呜~ 文件大小不能超过15MB。');
+            const maxSizeBytes = maxFileSizeMB * 1024 * 1024;
+            if (file.size > maxSizeBytes) {
+              // 改为普通字符串拼接避免潜在解析问题
+              throw new Error('喵呜~ 文件大小不能超过 ' + maxFileSizeMB + 'MB。');
             }
             const { id: fileId, iv, exportedKey } = await encryptAndUploadFile(file);
             id = fileId;
@@ -588,6 +609,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+	// 确保 config 在后续路由处理中可用
 
 	// Database check removed
 	// Use 0.0.0.0 to bind to all interfaces inside the container, or use config value if needed
@@ -618,11 +640,27 @@ func main() {
 	})
 
 	router.POST("/save-message", saveMessage)
-	router.POST("/save-file", SaveFileHandler)
+	// 将 config 传递给 SaveFileHandler
+	router.POST("/save-file", func(c *gin.Context) {
+		SaveFileHandler(c, config)
+	})
 	router.GET("/get-message", getMessage)
 	router.GET("/get-file", getFile)
 	router.POST("/generate-short-link", generateShortLink)
 	router.GET("/s/:shortCode", redirect)
+
+	// --- 新增：返回配置信息的端点 ---
+	router.GET("/config", func(c *gin.Context) {
+		if config == nil {
+			// 确保 config 已加载
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server configuration not loaded"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"maxFileSizeMB": config.Server.MaxFileSizeMB,
+		})
+	})
+	// --- 结束新增 ---
 
 	// 普通HTTP模式
 	log.Printf("Server running HTTP on %s:%s", host, port)

@@ -32,7 +32,7 @@
 
 1.  **克隆仓库:**
     ```bash
-    git clone https://github.com/jacksunhack/biu_email.git
+    git clone <your-repository-url>
     cd biu_email
     ```
 

@@ -25,9 +25,10 @@ type Config struct {
 		SaveMessage       string `yaml:"save_message"`
 	} `yaml:"paths"`
 	Server struct {
-		Host string `yaml:"host"`
-		Port int    `yaml:"port"`
-		TLS  struct {
+		Host          string `yaml:"host"`
+		Port          int    `yaml:"port"`
+		MaxFileSizeMB int    `yaml:"max_file_size_mb"` // 新增：最大文件上传大小 (MB)
+		TLS           struct {
 			Enabled  bool   `yaml:"enabled"`
 			Domain   string `yaml:"domain"`
 			Email    string `yaml:"email"`
