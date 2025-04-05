@@ -36,7 +36,7 @@ const indexHTML = `
       font-family: 'Pangolin', cursive, sans-serif;
       background-size: cover;
       background-position: center;
-      background-attachment: fixed;
+      background-attachment: fixed; /* Keep fixed for desktop */
       overflow-x: hidden;
       display: flex;
       flex-direction: column;
@@ -63,12 +63,13 @@ const indexHTML = `
       flex: 1;
       width: 100%;
       max-width: 800px;
-      margin: 20px;
-      padding: 30px;
-      background-color: rgba(255, 255, 255, 0.95);
-      backdrop-filter: blur(5px);
-      border-radius: 25px;
-      box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+      margin: 20px; /* Default margin */
+      padding: 30px; /* Default padding */
+      background-color: rgba(255, 255, 255, 0.92); /* Slightly more transparent */
+      backdrop-filter: blur(4px); /* Slightly reduce blur */
+      border-radius: 15px; /* Less rounded */
+      /* box-shadow: 0 2px 20px rgba(255, 169, 169, 0.1); */ /* Remove shadow */
+      /* border: 1px solid rgba(255, 108, 130, 0.3); */ /* Remove border */
       position: relative;
     }
     h1, h2 {
@@ -116,29 +117,33 @@ const indexHTML = `
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
-      margin-top: 20px;
+      margin-top: 25px; /* Increase top margin */
+      margin-bottom: 25px; /* Add bottom margin */
     }
     button {
       background-color: #FFB6C1;
       color: #FFF;
       border: none;
-      padding: 15px 30px;
+      padding: 12px 25px; /* Reduce padding */
       cursor: pointer;
-      transition: all 0.3s ease;
-      border-radius: 25px;
+      transition: all 0.2s ease; /* Slightly faster transition */
+      border-radius: 15px; /* Less rounded */
       letter-spacing: 1px;
       font-weight: bold;
-      box-shadow: 0 0 15px rgba(255, 182, 193, 0.7);
+      /* box-shadow: 0 0 15px rgba(255, 182, 193, 0.7); */ /* Remove shadow */
+      border: 1px solid rgba(255, 255, 255, 0.5); /* Add subtle border */
       flex-grow: 1;
       margin: 10px 5px;
     }
     button:hover {
       background-color: #FF91A4;
-      transform: scale(1.05);
-      box-shadow: 0 0 25px rgba(255, 182, 193, 0.7);
+      transform: scale(1.03); /* Slightly less scale */
+      /* box-shadow: 0 0 25px rgba(255, 182, 193, 0.7); */ /* Remove shadow */
+      border-color: #FFF;
     }
     button:active {
-      transform: scale(0.95);
+      transform: scale(0.98); /* Slightly less scale */
+      background-color: #FF8099; /* Darker pink on active */
     }
     #loading, #error, #success {
       padding: 15px;
@@ -187,14 +192,19 @@ const indexHTML = `
       margin: 25px 0;
     }
     footer {
+      display: flex; /* Use flexbox */
+      justify-content: center; /* Center items horizontally */
+      align-items: center; /* Center items vertically */
+      flex-wrap: wrap; /* Allow items to wrap */
       text-align: center;
-      padding: 20px;
+      padding: 15px; /* Slightly reduce padding */
       background-color: rgba(255, 111, 145, 0.8);
       border-top: 3px solid #FF6F91;
       font-family: sans-serif;
-      font-size: 1.2em;
+      font-size: 1.1em; /* Slightly reduce font size */
       letter-spacing: 1px;
       color: #FFFFFF;
+      line-height: 1.5; /* Add line-height for better spacing */
     }
     .cat-paw {
       width: 40px;
@@ -202,7 +212,7 @@ const indexHTML = `
       background-color: #FFB6C1;
       border-radius: 50%;
       display: inline-block;
-      margin: 0 10px;
+      margin: 5px 8px; /* Adjust margin for flexbox */
       position: relative;
       animation: wave 3s infinite;
       box-shadow: 0 0 10px rgba(255, 111, 145, 0.7);
@@ -220,9 +230,31 @@ const indexHTML = `
       color: #FF6F91;
     }
     /* 移动端优化 */
+    /* Medium screens and below */
+     @media (max-width: 768px) {
+       body {
+         background-attachment: scroll; /* Override fixed attachment for mobile */
+       }
+       .container {
+         margin: 15px; /* Reduce margin */
+         padding: 25px; /* Reduce padding */
+       }
+       footer {
+         font-size: 1em; /* Reduce font size */
+         padding: 10px;
+       }
+       .cat-paw {
+         width: 30px;
+         height: 30px;
+         margin: 5px;
+       }
+     }
+
+    /* Small screens */
     @media (max-width: 480px) {
       .container {
-        padding: 20px;
+        margin: 10px; /* Further reduce margin */
+        padding: 15px; /* Further reduce padding */
       }
       h1, h2 {
         font-size: 1.8em;
@@ -235,6 +267,18 @@ const indexHTML = `
         bottom: 15px;
         right: 15px;
       }
+       footer {
+         font-size: 0.9em; /* Further reduce font size */
+       }
+       .cat-paw {
+         width: 25px;
+         height: 25px;
+         margin: 3px;
+       }
+       /* Adjust list padding on mobile */
+       ol {
+         padding-left: 25px;
+       }
     }
   </style>
   <!-- 引入 OpenPGP.js 库 -->
