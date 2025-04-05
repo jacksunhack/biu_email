@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jacksunhack/biu_email/storage"
 )
 
 func generateShortLink(c *gin.Context) {
@@ -26,7 +25,7 @@ func generateShortLink(c *gin.Context) {
 	log.Printf("Generated short code: %s", shortCode)
 
 	log.Printf("Storing short link: %s -> %s", shortCode, longUrl)
-	storage.SetShortLink(shortCode, longUrl)
+	SetShortLink(shortCode, longUrl)
 	log.Printf("Successfully stored short link in memory")
 
 	shortUrl := fmt.Sprintf("http://%s/s/%s", c.Request.Host, shortCode)

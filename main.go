@@ -10,7 +10,6 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql" // This import seems unused now? Keep for now.
-	"github.com/jacksunhack/biu_email/storage"
 )
 
 // 嵌入 index.html 内容
@@ -601,7 +600,7 @@ func main() {
 	router := gin.Default()
 
 	// Check storage permissions
-	if err := storage.CheckStoragePermissions(); err != nil {
+	if err := CheckStoragePermissions(); err != nil {
 		log.Fatalf("Storage permissions check failed: %v", err)
 	}
 
