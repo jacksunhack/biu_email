@@ -11,7 +11,7 @@ services:
       # Mount the configuration file (read-only recommended)
       - ./config.yaml:/app/config.yaml:ro
       # Mount directories for persistent data
-      - ./biu_email_data/messages:/app/messages
+      - ./biu_email_data/messages:/app/messages:rw
       - ./biu_email_data/temp-files:/app/temp-files
       - ./biu_email_data/logs:/app/logs
       # Mount storage directory for persistence with proper permissions

@@ -37,6 +37,7 @@ COPY --from=builder --chown=appuser:appgroup /app/config.yaml .
 
 # Create directories and set permissions
 RUN mkdir -p /app/{messages,temp-files,logs,storage} && \
+    chmod -R 777 /app/messages && \
     chown -R appuser:appgroup /app && \
     chmod -R 777 /app/storage && \
     chmod 664 /app/biu_email.db || true
