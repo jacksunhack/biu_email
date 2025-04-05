@@ -401,14 +401,6 @@ const indexHTML = `
 
     document.addEventListener('DOMContentLoaded', async function() { // 改为 async
       const switchType = document.getElementById('switchType');
-       <div class="cat-paw"></div>
-       <div class="cat-paw"></div>
-    </div>
-  </footer>
-  <!-- 浮动图标 -->
-  <div class="floating-icon"><i class="fas fa-cat"></i></div>
-  <script>
-    let maxFileSizeMB = 15; // 默认值，以防配置加载失败
 
     document.addEventListener('DOMContentLoaded', async function() { // 改为 async
       const switchType = document.getElementById('switchType');
