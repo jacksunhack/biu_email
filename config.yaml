@@ -1,10 +1,10 @@
 application:
   name: Encrypted Anonymous Note
-  version: 1.0.0
-
 server:
-  host: 148.135.99.95
-  port: 8443
+  # Host should be 0.0.0.0 to listen on all interfaces inside the container,
+  # making it accessible via the port mapping from the host.
+  host: 0.0.0.0
+  port: 3003
 
 logging:
   level: DEBUG
@@ -12,11 +12,7 @@ logging:
   handlers:
     console: {}
     file:
+      # Path relative to the application's working directory (/app)
       path: logs/application.log
 
-database:
-  user: "biu-mail"
-  password: "XGNWYhCaSsR2tCPD"
-  host: "45.59.170.113"
-  port: 3306
-  name: "biu-mail"
+# Database section removed

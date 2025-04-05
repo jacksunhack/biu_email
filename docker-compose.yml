@@ -1,0 +1,28 @@
+
+
+services:
+  biu_email:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: biu_email
+    restart: unless-stopped
+    volumes:
+      # Mount the configuration file (read-only recommended)
+      - ./config.yaml:/app/config.yaml:ro
+      # Mount directories for persistent data
+      - ./biu_email_data/messages:/app/messages
+      - ./biu_email_data/temp-files:/app/temp-files
+      - ./biu_email_data/logs:/app/logs
+      # Mount storage directory for persistence with proper permissions
+      - ./biu_email_data/storage:/app/storage:rw
+      # Optional: If your Go app writes the DB with a specific user/group ID,
+      # you might need to ensure the host file has compatible permissions or
+      # explicitly set the user/group in the compose file (less common with non-root setup).
+      # user: "1001:1001" # Example: Replace with actual UID/GID if needed
+    ports:
+      # Map host port 3003 to container port 3003 (defined in config.yaml and exposed in Dockerfile)
+      - "3003:3003"
+    # Optional: Define a network if needed
+    # networks:
+    #   - biu_network

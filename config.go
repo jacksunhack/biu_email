@@ -13,6 +13,7 @@ type Config struct {
 		Version string `yaml:"version"`
 	} `yaml:"application"`
 	Paths struct {
+		Storage           string `yaml:"storage"`
 		Database          string `yaml:"database"`
 		GenerateShortLink string `yaml:"generate_short_link"`
 		GetFile           string `yaml:"get_file"`
@@ -26,6 +27,12 @@ type Config struct {
 	Server struct {
 		Host string `yaml:"host"`
 		Port int    `yaml:"port"`
+		TLS  struct {
+			Enabled  bool   `yaml:"enabled"`
+			Domain   string `yaml:"domain"`
+			Email    string `yaml:"email"`
+			CacheDir string `yaml:"cache_dir"`
+		} `yaml:"tls"`
 	} `yaml:"server"`
 	Security struct {
 		EncryptionKeyLength int    `yaml:"encryption_key_length"`
@@ -86,7 +93,7 @@ type Config struct {
 		Format   string `yaml:"format"`
 		Handlers struct {
 			Console struct{} `yaml:"console"`
-			File     struct {
+			File    struct {
 				Path string `yaml:"path"`
 			} `yaml:"file"`
 		} `yaml:"handlers"`
@@ -109,13 +116,6 @@ type Config struct {
 		Error              string `yaml:"error"`
 		Success            string `yaml:"success"`
 	} `yaml:"ui_text"`
-	Database struct {
-		User     string `yaml:"user"`
-		Password string `yaml:"password"`
-		Host     string `yaml:"host"`
-		Port     int    `yaml:"port"`
-		Name     string `yaml:"name"`
-	} `yaml:"database"`
 }
 
 func LoadConfig(configFile string) (*Config, error) {
