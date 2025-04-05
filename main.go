@@ -413,60 +413,114 @@ const indexHTML = `
         }
       }
 
-      async function downloadAndDecryptFile(fileId, keyData) {
+      async function downloadAndDecryptFile(fileId /* keyData no longer passed */) {
         try {
-          console.log('Starting file download and decryption');
+          console.log('Starting file download and decryption for ID:', fileId);
           const response = await fetch("/get-file?id=" + encodeURIComponent(fileId));
+
           if (!response.ok) {
             let errorMessage = "HTTP error! status: " + response.status;
             try {
+              // Try to get error message from body if server sent one (e.g., 404 JSON)
               const errorData = await response.json();
               errorMessage += ", message: " + (errorData.error || 'Unknown error');
             } catch (e) {
-              console.error('Failed to parse error response:', e);
+              // If body is not JSON or empty, use status text
+              errorMessage += ", message: " + response.statusText;
+              console.warn('Could not parse error response body as JSON:', e);
+            }
+             // Check specifically for 404 which might indicate burned file
+            if (response.status === 404 && errorMessage.includes("burned")) {
+                 errorMessage = '喵呜~ 文件已经被销毁了！';
             }
             throw new Error(errorMessage);
           }
-          const data = await response.json();
-          if (!data.encryptedFile) {
-            throw new Error('喵呜~ 没有收到加密的文件数据');
+
+          // Extract metadata from headers
+          const ivB64 = response.headers.get('X-File-IV');
+          const keyB64 = response.headers.get('X-File-Key');
+          const fileNameB64 = response.headers.get('X-File-Name-Base64'); // Use Base64 encoded filename header
+          const fileType = response.headers.get('X-File-Type');
+
+          if (!ivB64 || !keyB64 || !fileNameB64 || !fileType) {
+            console.error('Missing headers:', {ivB64, keyB64, fileNameB64, fileType});
+            throw new Error('喵呜~ 响应头中缺少必要的元数据');
           }
+
+          // Decode metadata
+          const iv = new Uint8Array(atob(ivB64).split('').map(char => char.charCodeAt(0)));
+          const keyBytes = new Uint8Array(atob(keyB64).split('').map(char => char.charCodeAt(0)));
+          // Decode Base64 URL encoded filename (standard Base64 should be fine if server used StdEncoding)
+          let fileName = 'downloaded_file'; // Default filename
+          try {
+             // Use standard atob for decoding filename sent with StdEncoding
+             fileName = decodeURIComponent(escape(atob(fileNameB64))); // Decode base64 then UTF-8
+          } catch(e) {
+             console.error("Error decoding filename from Base64 header:", e);
+             // Keep default filename
+          }
+
+
+          console.log('Metadata extracted:', {fileName, fileType, ivLength: iv.length, keyLength: keyBytes.length});
+
+          // Import the decryption key
           const key = await window.crypto.subtle.importKey(
             "raw",
-            new Uint8Array(keyData.key),
+            keyBytes,
             { name: "AES-GCM", length: 256 },
-            false,
+            false, // Not exportable
             ["decrypt"]
           );
-          const encryptedData = new Uint8Array(atob(data.encryptedFile).split('').map(char => char.charCodeAt(0)));
+          console.log('Decryption key imported successfully');
+
+          // Get the encrypted file data from the response body
+          console.log('Fetching response body as ArrayBuffer...');
+          const encryptedData = await response.arrayBuffer(); // Get raw binary data
+          console.log('Encrypted data received, size:', encryptedData.byteLength);
+
+
+          // Decrypt the content
+          console.log('Decrypting file content...');
           const decryptedContent = await window.crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: new Uint8Array(keyData.iv) },
+            { name: "AES-GCM", iv: iv },
             key,
             encryptedData
           );
-          const blob = new Blob([decryptedContent], { type: data.fileType });
+          console.log('Decryption successful, decrypted size:', decryptedContent.byteLength);
+
+          // Create a Blob and trigger download
+          const blob = new Blob([decryptedContent], { type: fileType });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = data.fileName || 'downloaded_file';
+          a.download = fileName; // Use the decoded filename
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          // 文件成功解密后，发送销毁请求
+          console.log('File download triggered for:', fileName);
+
+          // File successfully decrypted and download triggered, now send burn request
+          console.log('Sending burn request for file ID:', fileId);
           const burnResponse = await fetch("/burn-file?id=" + encodeURIComponent(fileId), { method: 'POST' });
           if (!burnResponse.ok) {
-            console.warn('Failed to burn file:', await burnResponse.text());
-          }
-          document.getElementById('content').innerText = '喵呜~ 文件已成功下载，并已从服务器删除！';
-        } catch (error) {
-          let errorMessage = '喵呜~ 下载或解密文件时出现错误：';
-          if (error.message.includes("File has been burned")) {
-            errorMessage = '喵呜~ 文件已经被销毁了！';
-          } else if (error.message.includes("HTTP error!")) {
-            errorMessage += error.message;
+             const burnErrorText = await burnResponse.text();
+             console.warn('Failed to burn file:', burnResponse.status, burnErrorText);
+             // Inform user, but download was successful
+             document.getElementById('content').innerText = '喵呜~ 文件已成功下载，但销毁请求失败: ' + burnErrorText;
           } else {
-            errorMessage += error.toString();
+             console.log('Burn request successful');
+             document.getElementById('content').innerText = '喵呜~ 文件已成功下载，并已从服务器删除！';
+          }
+
+        } catch (error) {
+          console.error("Download/Decryption error:", error);
+          let errorMessage = '喵呜~ 下载或解密文件时出现错误：';
+          // Use the refined error message if available
+          if (error.message.includes("HTTP error!") || error.message.includes("已经被销毁")) {
+             errorMessage = error.message; // Use the message directly
+          } else {
+             errorMessage += error.toString();
           }
           document.getElementById('content').innerText = errorMessage;
         }
@@ -557,11 +611,11 @@ const indexHTML = `
         const type = new URLSearchParams(window.location.search).get('type');
         if (type === 'file') {
           try {
-            const keyData = JSON.parse(atob(key));
+            // const keyData = JSON.parse(atob(key)); // Key data is no longer in URL
             if (!id || id === 'undefined') {
               throw new Error('喵呜~ 无效的文件ID');
             }
-            downloadAndDecryptFile(id, keyData);
+            downloadAndDecryptFile(id); // Call without keyData
           } catch (error) {
             document.getElementById('content').innerText = '喵呜~ 解析密钥数据时出错：' + error.message;
           }
@@ -619,7 +673,12 @@ func main() {
 
 	// No database initialization needed
 
+	// 设置 Gin 为 release 模式以提高性能
+	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
+
+	// 确保分片上传所需的目录存在
+	ensureDirectoriesExist()
 
 	// Check storage permissions
 	if err := CheckStoragePermissions(); err != nil {
@@ -646,8 +705,15 @@ func main() {
 	})
 	router.GET("/get-message", getMessage)
 	router.GET("/get-file", getFile)
+	router.POST("/burn-file", burnFileHandler) // 添加销毁文件的路由
 	router.POST("/generate-short-link", generateShortLink)
 	router.GET("/s/:shortCode", redirect)
+
+	// --- 分片上传路由 ---
+	router.POST("/upload/init", InitUploadHandler)         // 初始化上传
+	router.POST("/upload/chunk", ChunkUploadHandler)       // 上传分片
+	router.GET("/upload/status", CheckUploadStatusHandler) // 检查上传状态
+	// --- 结束分片上传路由 ---
 
 	// --- 新增：返回配置信息的端点 ---
 	router.GET("/config", func(c *gin.Context) {
