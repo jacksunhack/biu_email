@@ -192,19 +192,15 @@ const indexHTML = `
       margin: 25px 0;
     }
     footer {
-      display: flex; /* Use flexbox */
-      justify-content: center; /* Center items horizontally */
-      align-items: center; /* Center items vertically */
-      flex-wrap: wrap; /* Allow items to wrap */
       text-align: center;
-      padding: 15px; /* Slightly reduce padding */
+      padding: 15px; /* Restore some padding */
       background-color: rgba(255, 111, 145, 0.8);
       border-top: 3px solid #FF6F91;
       font-family: sans-serif;
-      font-size: 1.1em; /* Slightly reduce font size */
-      letter-spacing: 1px;
+      font-size: 0.9em; /* Make text slightly smaller */
+      letter-spacing: 0.5px;
       color: #FFFFFF;
-      line-height: 1.5; /* Add line-height for better spacing */
+      line-height: 1.5; /* Adjust line-height */
     }
     .cat-paw {
       width: 40px;
@@ -279,12 +275,79 @@ const indexHTML = `
        ol {
          padding-left: 25px;
        }
+       /* GitHub Fork Ribbon - Consistent Styling */
+        .github-fork-ribbon {
+          /* The size of the ribbon */
+          width: 12.1em;
+          height: 12.1em;
+          /* Position the ribbon */
+          position: fixed; /* Use fixed to stick to viewport */
+          overflow: hidden; /* Hide overflow */
+          top: 0;
+          right: 0;
+          z-index: 9999; /* Ensure it's on top */
+          /* Make the container invisible, but clickable */
+          pointer-events: none;
+          /* Set the font properties */
+          font-size: 13px;
+          text-decoration: none;
+          /* Hide the text content of the link */
+          text-indent: -999999px;
+        }
+  
+        .github-fork-ribbon:before, .github-fork-ribbon:after {
+          /* Position and style the ribbon background and text */
+          position: absolute;
+          display: block;
+          width: 15.38em; /* Adjust width as needed */
+          height: 1.54em; /* Adjust height as needed */
+          top: 3.23em; /* Position from top */
+          right: -3.23em; /* Position from right */
+          box-sizing: content-box;
+          /* Apply the rotation */
+          transform: rotate(45deg);
+        }
+  
+        .github-fork-ribbon:before {
+          /* Create the background */
+          content: "";
+          padding: .38em 0;
+          background-color: #FF6F91; /* Theme color */
+          background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.15));
+          box-shadow: 0 .15em .23em 0 rgba(0, 0, 0, 0.5);
+          pointer-events: auto; /* Allow clicks on the background */
+        }
+  
+        .github-fork-ribbon:after {
+          /* Add the text */
+          content: attr(data-ribbon);
+          color: #fff;
+          font: 700 1em "Helvetica Neue", Helvetica, Arial, sans-serif;
+          line-height: 1.54em;
+          text-decoration: none;
+          text-shadow: 0 -.08em rgba(0, 0, 0, 0.5);
+          text-align: center;
+          text-indent: 0; /* Make text visible */
+          padding: .15em 0;
+          margin: .15em 0;
+          /* Removed border styles */
+          pointer-events: auto; /* Allow clicks on the text */
+        }
+  
+        /* Adjust size on smaller screens */
+        @media (max-width: 768px) {
+          .github-fork-ribbon {
+            font-size: 10px; /* Make ribbon smaller */
+          }
+        }
     }
   </style>
   <!-- 引入 OpenPGP.js 库 -->
   <script src="https://unpkg.com/openpgp@5.5.0/dist/openpgp.min.js"></script>
 </head>
-<body>
+<body style="position: relative;"> <!-- Add relative positioning to body if needed for absolute children, though fixed should work -->
+  <!-- GitHub Fork Ribbon - Placed right after body opening tag -->
+  <a class="github-fork-ribbon right-top" href="https://github.com/jacksunhack/biu_email" data-ribbon="Fork me on GitHub" title="Fork me on GitHub">Fork me on GitHub</a>
   <div class="page-wrapper">
     <div class="ad-space"></div>
     <div class="container">
@@ -325,13 +388,22 @@ const indexHTML = `
     <div class="ad-space"></div>
   </div>
   <footer>
-    <div class="cat-paw"></div>
-    <div class="cat-paw"></div>
-    <div class="cat-paw"></div>
-    Theme by Anon_Neko
-    <div class="cat-paw"></div>
-    <div class="cat-paw"></div>
-    <div class="cat-paw"></div>
+    <div>Theme by Anon_Neko</div> <!-- Line 1 -->
+    <div style="margin-top: 5px;"> <!-- Line 2 with spacing -->
+      Powered by <a href="https://f1tz.com" target="_blank" style="color: #fff; border-bottom: 1px dashed #fff;">f1TZof</a>
+    </div>
+    <!-- Removed cat paws for cleaner look -->
+  </footer>
+  <!-- 浮动图标 -->
+  <div class="floating-icon"><i class="fas fa-cat"></i></div>
+  <script>
+    let maxFileSizeMB = 15; // 默认值，以防配置加载失败
+
+    document.addEventListener('DOMContentLoaded', async function() { // 改为 async
+      const switchType = document.getElementById('switchType');
+       <div class="cat-paw"></div>
+       <div class="cat-paw"></div>
+    </div>
   </footer>
   <!-- 浮动图标 -->
   <div class="floating-icon"><i class="fas fa-cat"></i></div>
