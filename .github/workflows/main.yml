@@ -68,13 +68,14 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Build and push to GitHub Container Registry
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:latest
-          labels: ${{ steps.meta.outputs.labels }}
+      # Temporarily disabled GHCR push due to permission issues
+      # - name: Build and push to GitHub Container Registry
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: .
+      #     push: true
+      #     tags: ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:latest
+      #     labels: ${{ steps.meta.outputs.labels }}
 
   create-release:
     name: Create Release
