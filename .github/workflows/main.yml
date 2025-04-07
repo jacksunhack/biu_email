@@ -92,8 +92,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           body: |
             Automated release for ${{ github.ref_name }}
-            Docker images pushed to:
+            Docker image pushed to:
             - Docker Hub: ${{ env.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}
-            - GitHub Packages: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           draft: false
           prerelease: false
