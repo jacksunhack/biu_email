@@ -50,3 +50,5 @@ EXPOSE 3003
 
 # Define the command to run the application with config file
 CMD ["./biu_email", "-config", "/app/config.yaml"]
+
+

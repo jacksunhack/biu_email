@@ -5,814 +5,695 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings" // Import strings package
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	_ "github.com/go-sql-driver/mysql" // This import seems unused now? Keep for now.
+	// _ "github.com/go-sql-driver/mysql" // Keep commented or remove if not needed
 )
 
-// 嵌入 index.html 内容
+// indexHTML 包含完整的前端代码
 const indexHTML = `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <title>Nyaa~crypted Kitty Note</title>
-  <!-- 添加 viewport 元标签 -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- 引入 Font Awesome 图标库 -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" 
-        integrity="sha384-Fo3rlrQkzQk58+ae5ujg3X8bW5g1d28cZbfD3VJjE1KE6L5Q6vhgkGnj4U6JNvQv" crossorigin="anonymous">
-  <!-- 引入 Animate.css 动画库 -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
-  <!-- 引入可爱字体 Pangolin -->
-  <link href="https://fonts.googleapis.com/css2?family=Pangolin&display=swap" rel="stylesheet">
-  <style>
-    /* 全局样式 */
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: 'Pangolin', cursive, sans-serif;
-      background-size: cover;
-      background-position: center;
-      background-attachment: fixed; /* Keep fixed for desktop */
-      overflow-x: hidden;
-      display: flex;
-      flex-direction: column;
-      min-height: 100vh;
-      background-color: #fffafc;
-    }
-    .page-wrapper {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      align-items: flex-start;
-      padding: 20px;
-    }
-    .ad-space {
-      width: 160px;
-      padding: 10px;
-    }
-    @media (max-width: 768px) {
-      .ad-space {
-        display: none;
-      }
-    }
-    .container {
-      flex: 1;
-      width: 100%;
-      max-width: 800px;
-      margin: 20px; /* Default margin */
-      padding: 30px; /* Default padding */
-      background-color: rgba(255, 255, 255, 0.92); /* Slightly more transparent */
-      backdrop-filter: blur(4px); /* Slightly reduce blur */
-      border-radius: 15px; /* Less rounded */
-      /* box-shadow: 0 2px 20px rgba(255, 169, 169, 0.1); */ /* Remove shadow */
-      /* border: 1px solid rgba(255, 108, 130, 0.3); */ /* Remove border */
-      position: relative;
-    }
-    h1, h2 {
-      text-align: center;
-      text-shadow: 2px 2px 4px #FFD1DC;
-      color: #FF6F91;
-      margin: 10px 0;
-    }
-    h1 {
-      font-size: 2.5em;
-    }
-    h2 {
-      font-size: 1.8em;
-    }
-    @media (max-width: 768px) {
-      h1 {
-        font-size: 2em;
-      }
-      h2 {
-        font-size: 1.5em;
-      }
-    }
-    label {
-      font-size: 1.2em;
-      letter-spacing: 1px;
-      display: block;
-      margin-bottom: 5px;
-      color: #FF6F91;
-    }
-    input, textarea {
-      background-color: #fff;
-      color: #2F6F91;
-      border: 2px solid #FFD1DC;
-      padding: 12px;
-      margin: 5px 0 15px 0;
-      border-radius: 15px;
-      width: 100%;
-      box-sizing: border-box;
-      font-size: 1em;
-    }
-    input::placeholder, textarea::placeholder {
-      color: #FF6F91;
-    }
-    .button-container {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      margin-top: 25px; /* Increase top margin */
-      margin-bottom: 25px; /* Add bottom margin */
-    }
-    button {
-      background-color: #FFB6C1;
-      color: #FFF;
-      border: none;
-      padding: 12px 25px; /* Reduce padding */
-      cursor: pointer;
-      transition: all 0.2s ease; /* Slightly faster transition */
-      border-radius: 15px; /* Less rounded */
-      letter-spacing: 1px;
-      font-weight: bold;
-      /* box-shadow: 0 0 15px rgba(255, 182, 193, 0.7); */ /* Remove shadow */
-      border: 1px solid rgba(255, 255, 255, 0.5); /* Add subtle border */
-      flex-grow: 1;
-      margin: 10px 5px;
-    }
-    button:hover {
-      background-color: #FF91A4;
-      transform: scale(1.03); /* Slightly less scale */
-      /* box-shadow: 0 0 25px rgba(255, 182, 193, 0.7); */ /* Remove shadow */
-      border-color: #FFF;
-    }
-    button:active {
-      transform: scale(0.98); /* Slightly less scale */
-      background-color: #FF8099; /* Darker pink on active */
-    }
-    #loading, #error, #success {
-      padding: 15px;
-      margin: 15px 0;
-      border: 2px solid;
-      border-radius: 15px;
-      text-align: center;
-      font-size: 1.2em;
-    }
-    #error {
-      color: #FF4500;
-      border-color: #FF4500;
-      background-color: #FFF0F0;
-    }
-    #success {
-      color: #2F6F91;
-      border-color: #FFB6C1;
-      background-color: #F9F9F9;
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(255, 182, 193, 0.7); }
-      70% { box-shadow: 0 0 0 15px rgba(255, 182, 193, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(255, 182, 193, 0); }
-    }
-    a {
-      color: #FF6F91;
-      text-decoration: none;
-      border-bottom: 2px dashed #FF6F91;
-      transition: all 0.3s;
-      word-break: break-all;
-    }
-    a:hover {
-      border-bottom: 2px solid #FF6F91;
-      color: #FF1493;
-    }
-    #content-container {
-      background-color: rgba(255, 182, 193, 0.3);
-      border-radius: 15px;
-      padding: 20px;
-      margin-top: 25px;
-    }
-    hr {
-      border: none;
-      border-top: 3px dashed #FFB6C1;
-      margin: 25px 0;
-    }
-    footer {
-      text-align: center;
-      padding: 15px; /* Restore some padding */
-      background-color: rgba(255, 111, 145, 0.8);
-      border-top: 3px solid #FF6F91;
-      font-family: sans-serif;
-      font-size: 0.9em; /* Make text slightly smaller */
-      letter-spacing: 0.5px;
-      color: #FFFFFF;
-      line-height: 1.5; /* Adjust line-height */
-    }
-    .cat-paw {
-      width: 40px;
-      height: 40px;
-      background-color: #FFB6C1;
-      border-radius: 50%;
-      display: inline-block;
-      margin: 5px 8px; /* Adjust margin for flexbox */
-      position: relative;
-      animation: wave 3s infinite;
-      box-shadow: 0 0 10px rgba(255, 111, 145, 0.7);
-    }
-    @keyframes wave {
-      0%, 100% { transform: rotate(0deg); }
-      25% { transform: rotate(20deg); }
-      75% { transform: rotate(-20deg); }
-    }
-    .floating-icon {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      font-size: 2em;
-      color: #FF6F91;
-    }
-    /* 移动端优化 */
-    /* Medium screens and below */
-     @media (max-width: 768px) {
-       body {
-         background-attachment: scroll; /* Override fixed attachment for mobile */
-       }
-       .container {
-         margin: 15px; /* Reduce margin */
-         padding: 25px; /* Reduce padding */
-       }
-       footer {
-         font-size: 1em; /* Reduce font size */
-         padding: 10px;
-       }
-       .cat-paw {
-         width: 30px;
-         height: 30px;
-         margin: 5px;
-       }
-     }
-
-    /* Small screens */
-    @media (max-width: 480px) {
-      .container {
-        margin: 10px; /* Further reduce margin */
-        padding: 15px; /* Further reduce padding */
-      }
-      h1, h2 {
-        font-size: 1.8em;
-      }
-      label, input, textarea, button {
-        font-size: 1em;
-      }
-      .floating-icon {
-        font-size: 1.5em;
-        bottom: 15px;
-        right: 15px;
-      }
-       footer {
-         font-size: 0.9em; /* Further reduce font size */
-       }
-       .cat-paw {
-         width: 25px;
-         height: 25px;
-         margin: 3px;
-       }
-       /* Adjust list padding on mobile */
-       ol {
-         padding-left: 25px;
-       }
-       /* GitHub Fork Ribbon - Consistent Styling */
-        .github-fork-ribbon {
-          /* The size of the ribbon */
-          width: 12.1em;
-          height: 12.1em;
-          /* Position the ribbon */
-          position: fixed; /* Use fixed to stick to viewport */
-          overflow: hidden; /* Hide overflow */
-          top: 0;
-          right: 0;
-          z-index: 9999; /* Ensure it's on top */
-          /* Make the container invisible, but clickable */
-          pointer-events: none;
-          /* Set the font properties */
-          font-size: 13px;
-          text-decoration: none;
-          /* Hide the text content of the link */
-          text-indent: -999999px;
-        }
-  
-        .github-fork-ribbon:before, .github-fork-ribbon:after {
-          /* Position and style the ribbon background and text */
-          position: absolute;
-          display: block;
-          width: 15.38em; /* Adjust width as needed */
-          height: 1.54em; /* Adjust height as needed */
-          top: 3.23em; /* Position from top */
-          right: -3.23em; /* Position from right */
-          box-sizing: content-box;
-          /* Apply the rotation */
-          transform: rotate(45deg);
-        }
-  
-        .github-fork-ribbon:before {
-          /* Create the background */
-          content: "";
-          padding: .38em 0;
-          background-color: #FF6F91; /* Theme color */
-          background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.15));
-          box-shadow: 0 .15em .23em 0 rgba(0, 0, 0, 0.5);
-          pointer-events: auto; /* Allow clicks on the background */
-        }
-  
-        .github-fork-ribbon:after {
-          /* Add the text */
-          content: attr(data-ribbon);
-          color: #fff;
-          font: 700 1em "Helvetica Neue", Helvetica, Arial, sans-serif;
-          line-height: 1.54em;
-          text-decoration: none;
-          text-shadow: 0 -.08em rgba(0, 0, 0, 0.5);
-          text-align: center;
-          text-indent: 0; /* Make text visible */
-          padding: .15em 0;
-          margin: .15em 0;
-          /* Removed border styles */
-          pointer-events: auto; /* Allow clicks on the text */
-        }
-  
-        /* Adjust size on smaller screens */
-        @media (max-width: 768px) {
-          .github-fork-ribbon {
-            font-size: 10px; /* Make ribbon smaller */
-          }
-        }
-    }
-  </style>
-  <!-- 引入 OpenPGP.js 库 -->
-  <script src="https://unpkg.com/openpgp@5.5.0/dist/openpgp.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biu~ 阅后即焚 (客户端加密版)</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 700px; margin: auto; background-color: #f8f9fa; color: #343a40; }
+        .container { background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h1, h2 { color: #495057; text-align: center; margin-bottom: 1.5rem;}
+        h1 { font-size: 2rem;}
+        h2 { font-size: 1.5rem; color: #6c757d;}
+        textarea, input[type="file"], input[type="text"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; font-size: 1rem; }
+        textarea { min-height: 120px; resize: vertical; }
+        button { background-color: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-right: 10px; transition: background-color 0.2s ease-in-out; }
+        button:hover { background-color: #0056b3; }
+        #switchType { background-color: #ffc107; color: #212529;}
+        #switchType:hover { background-color: #e0a800; }
+        #result, #content-area, #status { margin-top: 20px; padding: 15px; border-radius: 4px; font-size: 0.95rem; }
+        #result { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; word-wrap: break-word; }
+        #result a { color: #0c5460; font-weight: bold; text-decoration: none; }
+        #result a:hover { text-decoration: underline; }
+        #content-area { background-color: #e9ecef; border: 1px solid #dee2e6; color: #495057; white-space: pre-wrap; word-wrap: break-word; min-height: 100px; }
+        #status { background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; }
+        #error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .hidden { display: none; }
+        label { display: block; margin-bottom: 5px; font-weight: 500; color: #495057;}
+        .form-group { margin-bottom: 1rem; }
+        .button-container { display: flex; justify-content: flex-start; align-items: center; margin-top: 1.5rem; }
+        .loader { border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #007bff; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; margin-left: 10px;}
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6; font-size: 0.9em; color: #6c757d; }
+        footer a { color: #007bff; text-decoration: none; }
+        footer a:hover { text-decoration: underline; }
+    </style>
 </head>
-<body style="position: relative;"> <!-- Add relative positioning to body if needed for absolute children, though fixed should work -->
-  <!-- GitHub Fork Ribbon - Placed right after body opening tag -->
-  <a class="github-fork-ribbon right-top" href="https://github.com/jacksunhack/biu_email" data-ribbon="Fork me on GitHub" title="Fork me on GitHub">Fork me on GitHub</a>
-  <div class="page-wrapper">
-    <div class="ad-space"></div>
+<body>
     <div class="container">
-      <div class="animated-background"></div>
-      <h1 class="animate__animated animate__fadeInDown">
-        <span class="cat-icon">🐱</span> Nyaa~crypted Kitty Note <span class="cat-icon">🐱</span>
-      </h1>
-      <h2 class="animate__animated animate__fadeInDown animate__delay-1s">// New purr-mission</h2>
-      <form class="form animate__animated animate__fadeInUp animate__delay-2s" action="javascript:void(0);" method="post">
-        <fieldset class="form-group form-textarea">
-          <label for="message"><i class="fas fa-comment-dots"></i> ENCRYPTED_NYAA:</label>
-          <textarea id="message" name="message" rows="10" placeholder="Enter your classified cat-formation here..." class="form-control"></textarea>
-        </fieldset>
-        <fieldset class="form-group" style="display: none;">
-          <label for="fileInput"><i class="fas fa-file-upload"></i> ENCRYPTED_PAW_PRINT:</label>
-          <input type="file" id="fileInput" name="fileInput" class="form-control">
-        </fieldset>
-        <div class="button-container">
-          <button type="button" id="switchType"><i class="fas fa-exchange-alt"></i> SWITCH_NYAA_MODE</button>
-          <button type="submit"><i class="fas fa-lock"></i> ENCRYPT_AND PURR-TRANSMIT</button>
+        <h1>Biu~ 阅后即焚</h1>
+        <h2>(客户端加密版)</h2>
+
+        <div class="form-group">
+            <label for="contentType">内容类型:</label>
+            <button id="switchType">切换到文件模式</button>
         </div>
-      </form>
-      <div id="loading" style="display: none;">ENCRYPTING_WHISKERS...</div>
-      <div id="error" style="display: none;" class="alert alert-error"></div>
-      <div id="success" style="display: none;" class="alert alert-success">
-        SECURE_CATWALK: <a id="link" href=""></a>
-      </div>
-      <hr>
-      <ol>
-        <li>CREATE_ENCRYPTED_NYAA</li>
-        <li>TRANSMIT_SECURE_PURR-LINK</li>
-        <li>MESSAGE_SELF_DESTRUCTS_AFTER_READING</li>
-      </ol>
-      <div id="content-container" class="alert alert-info">
-        <div id="content"></div>
-      </div>
+
+        <form id="encryptForm">
+            <div id="textMode">
+                <div class="form-group">
+                    <label for="message">输入文本:</label>
+                    <textarea id="message" rows="8" placeholder="在此输入你的秘密消息..."></textarea>
+                </div>
+            </div>
+            <div id="fileMode" class="hidden">
+                <div class="form-group">
+                    <label for="fileInput">选择文件:</label>
+                    <input type="file" id="fileInput">
+                    <small id="fileSizeWarning" class="hidden" style="color: red;">文件大小超过限制！</small>
+                </div>
+            </div>
+            <div class="button-container">
+                <button type="submit" id="submitBtn">加密并生成链接</button>
+                <div id="loader" class="loader hidden"></div>
+            </div>
+        </form>
+
+        <div id="status" class="hidden"></div>
+        <div id="error" class="hidden"></div>
+        <div id="result" class="hidden">
+            <p>成功！你的阅后即焚链接：</p>
+            <a id="link" href="#" target="_blank"></a>
+            <p><small>请注意：此链接仅能访问一次，密钥存储在 # 之后的部分，不会发送到服务器。</small></p>
+        </div>
+
+        <div id="content-area" class="hidden">
+            <h2>解密内容:</h2>
+            <div id="decrypted-content"></div>
+        </div>
     </div>
-    <div class="ad-space"></div>
-  </div>
-  <footer>
-    <div>Theme by Anon_Neko</div> <!-- Line 1 -->
-    <div style="margin-top: 5px;"> <!-- Line 2 with spacing -->
-      Powered by <a href="https://f1tz.com" target="_blank" style="color: #fff; border-bottom: 1px dashed #fff;">f1TZof</a>
-    </div>
-    <!-- Removed cat paws for cleaner look -->
-  </footer>
-  <!-- 浮动图标 -->
-  <div class="floating-icon"><i class="fas fa-cat"></i></div>
-  <script>
-    let maxFileSizeMB = 15; // 默认值，以防配置加载失败
 
-    // Ensure only one DOMContentLoaded listener
-    document.addEventListener('DOMContentLoaded', async function() {
-      console.log("DOM fully loaded and parsed"); // Log: DOM ready
+    <footer>
+        Powered by Go & Gin | Client-Side Encryption with AES-GCM + HKDF
+        <br>
+        <a href="https://github.com/jacksunhack/biu_email" target="_blank">GitHub Repository</a>
+    </footer>
 
-      const switchTypeButton = document.getElementById('switchType');
-      const messageField = document.querySelector('fieldset.form-textarea');
-      const messageInput = document.getElementById('message');
-      const fileInput = document.getElementById('fileInput');
-      const fileField = fileInput ? fileInput.parentElement : null; // Check if fileInput exists
-      const form = document.querySelector('form'); // Select the form
+    <script>
+        let isFileMode = false;
+        let maxFileSizeMB = 15; // Default, will be updated from config
+        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunk size
 
-      // Log element selections
-      console.log("Elements selected:", { switchTypeButton, messageField, messageInput, fileInput, fileField, form });
+        // --- DOM Elements ---
+        const switchTypeButton = document.getElementById('switchType');
+        const textModeDiv = document.getElementById('textMode');
+        const fileModeDiv = document.getElementById('fileMode');
+        const messageTextarea = document.getElementById('message');
+        const fileInput = document.getElementById('fileInput');
+        const fileSizeWarning = document.getElementById('fileSizeWarning');
+        const encryptForm = document.getElementById('encryptForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const loader = document.getElementById('loader');
+        const statusDiv = document.getElementById('status');
+        const errorDiv = document.getElementById('error');
+        const resultDiv = document.getElementById('result');
+        const linkElement = document.getElementById('link');
+        const contentAreaDiv = document.getElementById('content-area');
+        const decryptedContentDiv = document.getElementById('decrypted-content');
 
-      if (!switchTypeButton) {
-          console.error("Switch Type button not found!");
-      }
-      if (!form) {
-          console.error("Form element not found!");
-      }
-      if (!messageField || !messageInput || !fileInput || !fileField) {
-          console.error("One or more form field elements not found!");
-      }
-
-      // --- 新增：加载配置 ---
-      try {
-        const configResponse = await fetch('/config');
-        if (configResponse.ok) {
-          const configData = await configResponse.json();
-          if (configData.maxFileSizeMB) {
-            maxFileSizeMB = parseInt(configData.maxFileSizeMB, 10);
-            console.log('Max file size loaded from config:', maxFileSizeMB, 'MB');
-          }
-        } else {
-          console.warn('Failed to load config from server, using default max file size.');
+        // --- Utility Functions ---
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return window.btoa(binary);
         }
-      } catch (error) {
-        console.error('Error fetching config:', error);
-      }
-      // --- 结束新增 ---
 
-      // 获取随机二次元背景图片
-      fetch('https://api.waifu.pics/sfw/waifu')
-        .then(response => response.json())
-        .then(data => {
-          document.body.style.backgroundImage = "url('" + data.url + "')";
-        })
-        .catch(error => console.error('Error fetching background image:', error));
-
-      // Add event listener for switch type button
-      if (switchTypeButton && messageField && fileField) {
-          switchTypeButton.addEventListener('click', function() {
-            console.log("Switch Type button clicked"); // Log: Switch button click
-        if (messageField.style.display === 'none') {
-          messageField.style.display = 'block';
-          fileField.style.display = 'none';
-          this.innerHTML = '<i class="fas fa-file-image"></i> SWITCH_TO_PAW_PRINT_MODE';
-        } else {
-          messageField.style.display = 'none';
-          fileField.style.display = 'block';
-          this.innerHTML = '<i class="fas fa-comment-dots"></i> SWITCH_TO_MEOW_MODE';
+        function base64ToArrayBuffer(base64) {
+            const binary_string = window.atob(base64);
+            const len = binary_string.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binary_string.charCodeAt(i);
+            }
+            return bytes.buffer;
         }
-      });
-    } // <-- 添加缺失的结束花括号 for if (switchTypeButton && ...)
 
-      // 检查 Web Crypto API 支持
-      if (!window.crypto || !window.crypto.subtle) {
-        console.error("Web Crypto API not supported");
-        alert("喵呜~ 你的浏览器不支持所需的加密功能。请使用现代浏览器！");
-        return;
-      }
-
-      async function generateKey() {
-        try {
-          console.log("Generating encryption key...");
-          const key = await window.crypto.subtle.generateKey(
-            { name: "AES-GCM", length: 256 },
-            true,
-            ["encrypt", "decrypt"]
-          );
-          console.log("Encryption key generated successfully");
-          return key;
-        } catch (error) {
-          console.error("Error generating key:", error);
-          throw new Error("喵呜~ 生成加密密钥失败");
+        function showStatus(message, isError = false) {
+            hideMessages();
+            const targetDiv = isError ? errorDiv : statusDiv;
+            targetDiv.textContent = message;
+            targetDiv.classList.remove('hidden');
         }
-      }
 
-      async function encryptFile(file) {
-        try {
-          console.log("Starting file encryption...");
-          const key = await generateKey();
-          const iv = window.crypto.getRandomValues(new Uint8Array(12));
-          const fileData = await file.arrayBuffer();
-          console.log("Encrypting file data...");
-          const encryptedContent = await window.crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: iv },
-            key,
-            fileData
-          );
-          console.log("Exporting key...");
-          const exportedKey = await window.crypto.subtle.exportKey("raw", key);
-          console.log("File encryption completed");
-          return { encryptedContent, iv, exportedKey };
-        } catch (error) {
-          console.error("Error encrypting file:", error);
-          throw new Error("喵呜~ 加密文件失败");
+        function showResult(url) {
+            hideMessages();
+            linkElement.href = url;
+            linkElement.textContent = url;
+            resultDiv.classList.remove('hidden');
         }
-      }
 
-      async function encryptAndUploadFile(file) {
-        try {
-          console.log("Starting file encryption and upload process...");
-          const { encryptedContent, iv, exportedKey } = await encryptFile(file);
-          const formData = new FormData();
-          formData.append('file', new Blob([encryptedContent]), file.name + '.enc');
-          formData.append('fileName', file.name);
-          formData.append('fileType', file.type);
-          formData.append('iv', new Blob([iv]));
-          formData.append('key', new Blob([exportedKey]));
-          console.log("Sending encrypted file to server...");
-          const response = await fetch('/save-file', {
-            method: 'POST',
-            body: formData
-          });
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error("HTTP error! status: " + response.status + ", message: " + errorText);
-          }
-          const result = await response.json();
-          if (!result.filename) {
-            throw new Error("喵呜~ 服务器没有返回文件名");
-          }
-          return { id: result.filename, iv, exportedKey };
-        } catch (error) {
-          console.error("Error uploading file:", error);
-          throw new Error("喵呜~ 上传文件失败: " + error.message);
+        function hideMessages() {
+            statusDiv.classList.add('hidden');
+            errorDiv.classList.add('hidden');
+            resultDiv.classList.add('hidden');
+            contentAreaDiv.classList.add('hidden');
         }
-      }
 
-      async function downloadAndDecryptFile(fileId /* keyData no longer passed */) {
-        try {
-          console.log('Starting file download and decryption for ID:', fileId);
-          const response = await fetch("/get-file?id=" + encodeURIComponent(fileId));
+        function setLoading(isLoading) {
+            if (isLoading) {
+                loader.classList.remove('hidden');
+                submitBtn.disabled = true;
+                submitBtn.textContent = '处理中...';
+            } else {
+                loader.classList.add('hidden');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '加密并生成链接';
+            }
+        }
 
-          if (!response.ok) {
-            let errorMessage = "HTTP error! status: " + response.status;
+        // --- Crypto Functions ---
+        async function generateMasterKey() {
+            const keyBytes = window.crypto.getRandomValues(new Uint8Array(32)); // 256 bits
+            return arrayBufferToBase64(keyBytes); // Store master key as base64
+        }
+
+        async function deriveEncryptionKey(masterKeyBase64, salt) {
+            const masterKey = base64ToArrayBuffer(masterKeyBase64);
+            const keyMaterial = await window.crypto.subtle.importKey(
+                "raw",
+                masterKey,
+                { name: "HKDF" },
+                false,
+                ["deriveKey"]
+            );
+            return window.crypto.subtle.deriveKey(
+                {
+                    name: "HKDF",
+                    salt: salt,
+                    info: new TextEncoder().encode("AES-GCM Encryption Key"), // Context info
+                    hash: "SHA-256"
+                },
+                keyMaterial,
+                { name: "AES-GCM", length: 256 },
+                true, // Allow export for debugging if needed, set to false in prod
+                ["encrypt", "decrypt"]
+            );
+        }
+
+        async function encryptData(dataBuffer, encryptionKey) {
+            const iv = window.crypto.getRandomValues(new Uint8Array(12)); // 96 bits is recommended for AES-GCM
+            const encryptedContent = await window.crypto.subtle.encrypt(
+                {
+                    name: "AES-GCM",
+                    iv: iv
+                },
+                encryptionKey,
+                dataBuffer
+            );
+            return { encryptedContent, iv };
+        }
+
+        async function decryptData(encryptedBuffer, iv, encryptionKey) {
             try {
-              // Try to get error message from body if server sent one (e.g., 404 JSON)
-              const errorData = await response.json();
-              errorMessage += ", message: " + (errorData.error || 'Unknown error');
+                const decryptedContent = await window.crypto.subtle.decrypt(
+                    {
+                        name: "AES-GCM",
+                        iv: iv
+                    },
+                    encryptionKey,
+                    encryptedBuffer
+                );
+                return decryptedContent;
             } catch (e) {
-              // If body is not JSON or empty, use status text
-              errorMessage += ", message: " + response.statusText;
-              console.warn('Could not parse error response body as JSON:', e);
+                console.error("Decryption failed:", e);
+                throw new Error("解密失败，密钥或数据可能已损坏。");
             }
-             // Check specifically for 404 which might indicate burned file
-            if (response.status === 404 && errorMessage.includes("burned")) {
-                 errorMessage = '喵呜~ 文件已经被销毁了！';
-            }
-            throw new Error(errorMessage);
-          }
-
-          // Extract metadata from headers
-          const ivB64 = response.headers.get('X-File-IV');
-          const keyB64 = response.headers.get('X-File-Key');
-          const fileNameB64 = response.headers.get('X-File-Name-Base64'); // Use Base64 encoded filename header
-          const fileType = response.headers.get('X-File-Type');
-
-          if (!ivB64 || !keyB64 || !fileNameB64 || !fileType) {
-            console.error('Missing headers:', {ivB64, keyB64, fileNameB64, fileType});
-            throw new Error('喵呜~ 响应头中缺少必要的元数据');
-          }
-
-          // Decode metadata
-          const iv = new Uint8Array(atob(ivB64).split('').map(char => char.charCodeAt(0)));
-          const keyBytes = new Uint8Array(atob(keyB64).split('').map(char => char.charCodeAt(0)));
-          // Decode Base64 URL encoded filename (standard Base64 should be fine if server used StdEncoding)
-          let fileName = 'downloaded_file'; // Default filename
-          try {
-             // Use standard atob for decoding filename sent with StdEncoding
-             fileName = decodeURIComponent(escape(atob(fileNameB64))); // Decode base64 then UTF-8
-          } catch(e) {
-             console.error("Error decoding filename from Base64 header:", e);
-             // Keep default filename
-          }
-
-
-          console.log('Metadata extracted:', {fileName, fileType, ivLength: iv.length, keyLength: keyBytes.length});
-
-          // Import the decryption key
-          const key = await window.crypto.subtle.importKey(
-            "raw",
-            keyBytes,
-            { name: "AES-GCM", length: 256 },
-            false, // Not exportable
-            ["decrypt"]
-          );
-          console.log('Decryption key imported successfully');
-
-          // Get the encrypted file data from the response body
-          console.log('Fetching response body as ArrayBuffer...');
-          const encryptedData = await response.arrayBuffer(); // Get raw binary data
-          console.log('Encrypted data received, size:', encryptedData.byteLength);
-
-
-          // Decrypt the content
-          console.log('Decrypting file content...');
-          const decryptedContent = await window.crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: iv },
-            key,
-            encryptedData
-          );
-          console.log('Decryption successful, decrypted size:', decryptedContent.byteLength);
-
-          // Create a Blob and trigger download
-          const blob = new Blob([decryptedContent], { type: fileType });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = fileName; // Use the decoded filename
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          console.log('File download triggered for:', fileName);
-
-          // File successfully decrypted and download triggered, now send burn request
-          console.log('Sending burn request for file ID:', fileId);
-          const burnResponse = await fetch("/burn-file?id=" + encodeURIComponent(fileId), { method: 'POST' });
-          if (!burnResponse.ok) {
-             const burnErrorText = await burnResponse.text();
-             console.warn('Failed to burn file:', burnResponse.status, burnErrorText);
-             // Inform user, but download was successful
-             document.getElementById('content').innerText = '喵呜~ 文件已成功下载，但销毁请求失败: ' + burnErrorText;
-          } else {
-             console.log('Burn request successful');
-             document.getElementById('content').innerText = '喵呜~ 文件已成功下载，并已从服务器删除！';
-          }
-
-        } catch (error) {
-          console.error("Download/Decryption error:", error);
-          let errorMessage = '喵呜~ 下载或解密文件时出现错误：';
-          // Use the refined error message if available
-          if (error.message.includes("HTTP error!") || error.message.includes("已经被销毁")) {
-             errorMessage = error.message; // Use the message directly
-          } else {
-             errorMessage += error.toString();
-          }
-          document.getElementById('content').innerText = errorMessage;
         }
-      }
 
-      document.querySelector('form').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        document.getElementById('loading').style.display = 'block';
-        document.getElementById('error').style.display = 'none';
-        document.getElementById('success').style.display = 'none';
-        try {
-          const isFileMode = messageField.style.display === 'none';
-          let id, key;
-          if (isFileMode) {
+        // --- Event Listeners ---
+        switchTypeButton.addEventListener('click', () => {
+            isFileMode = !isFileMode;
+            if (isFileMode) {
+                textModeDiv.classList.add('hidden');
+                fileModeDiv.classList.remove('hidden');
+                switchTypeButton.textContent = '切换到文本模式';
+                switchTypeButton.style.backgroundColor = '#17a2b8'; // Info color
+            } else {
+                textModeDiv.classList.remove('hidden');
+                fileModeDiv.classList.add('hidden');
+                switchTypeButton.textContent = '切换到文件模式';
+                switchTypeButton.style.backgroundColor = '#ffc107'; // Warning color
+            }
+            hideMessages(); // Clear status/results when switching modes
+        });
+
+        fileInput.addEventListener('change', () => {
             const file = fileInput.files[0];
-            if (!file) throw new Error('喵呜~ 请选择一个文件。');
-            const maxSizeBytes = maxFileSizeMB * 1024 * 1024;
-            if (file.size > maxSizeBytes) {
-              // 改为普通字符串拼接避免潜在解析问题
-              throw new Error('喵呜~ 文件大小不能超过 ' + maxFileSizeMB + 'MB。');
+            if (file) {
+                const maxSizeBytes = maxFileSizeMB * 1024 * 1024;
+                if (file.size > maxSizeBytes) {
+                    fileSizeWarning.classList.remove('hidden');
+                    submitBtn.disabled = true;
+                } else {
+                    fileSizeWarning.classList.add('hidden');
+                    submitBtn.disabled = false;
+                }
+            } else {
+                 fileSizeWarning.classList.add('hidden');
+                 submitBtn.disabled = false;
             }
-            const { id: fileId, iv, exportedKey } = await encryptAndUploadFile(file);
-            id = fileId;
-            key = btoa(JSON.stringify({ iv: Array.from(iv), key: Array.from(new Uint8Array(exportedKey)) }));
-          } else {
-            const message = messageInput.value;
-            if (!message) throw new Error('喵呜~ 请输入一条消息。');
-            const keyPair = await openpgp.generateKey({
-              type: 'ecc',
-              curve: 'curve25519',
-              userIDs: [{ name: 'Anonymous', email: 'anonymous@example.com' }]
-            });
-            const publicKey = await openpgp.readKey({ armoredKey: keyPair.publicKey });
-            const privateKey = await openpgp.readKey({ armoredKey: keyPair.privateKey });
-            const encrypted = await openpgp.encrypt({
-              message: await openpgp.createMessage({ text: message }),
-              encryptionKeys: publicKey
-            });
-            const response = await fetch('/save-message', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message: encrypted })
-            });
-            if (!response.ok) {
-              const errorText = await response.text();
-              if (errorText.startsWith('<')) {
-                throw new Error('喵呜~ 服务器错误: ' + errorText);
-              } else {
-                const errorData = JSON.parse(errorText);
-                throw new Error('喵呜~ 错误: ' + errorData.error);
-              }
-            }
-            const result = await response.json();
-            if (result.error) throw new Error(result.error);
-            id = result.id;
-            key = btoa(privateKey.armor());
-          }
-          const type = isFileMode ? 'file' : 'message';
-          const longLink = window.location.origin + window.location.pathname + '?id=' + id + '&key=' + key + '&type=' + type;
-          document.getElementById('link').href = longLink;
-          document.getElementById('link').innerText = '喵呜~ 正在生成链接，请稍等...';
-          document.getElementById('success').style.display = 'block';
-          const response = await fetch('/generate-short-link', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'longUrl=' + encodeURIComponent(longLink)
-          });
-          const data = await response.json();
-          if (data.error) {
-            throw new Error(data.error);
-          }
-          const shortLink = data.shortUrl;
-          document.getElementById('link').href = shortLink;
-          document.getElementById('link').innerText = shortLink;
-        } catch (error) {
-          document.getElementById('error').innerText = '喵呜~ 出错了: ' + error.message;
-          document.getElementById('error').style.display = 'block';
-        } finally {
-          document.getElementById('loading').style.display = 'none';
-        }
-      });
+        });
 
-      if (new URLSearchParams(window.location.search).has('id') &&
-          new URLSearchParams(window.location.search).has('key') &&
-          new URLSearchParams(window.location.search).has('type')) {
-        const id = new URLSearchParams(window.location.search).get('id');
-        const key = new URLSearchParams(window.location.search).get('key');
-        const type = new URLSearchParams(window.location.search).get('type');
-        if (type === 'file') {
-          try {
-            // const keyData = JSON.parse(atob(key)); // Key data is no longer in URL
-            if (!id || id === 'undefined') {
-              throw new Error('喵呜~ 无效的文件ID');
+        encryptForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            hideMessages();
+            setLoading(true);
+
+            try {
+                const masterKeyBase64 = await generateMasterKey();
+                const salt = window.crypto.getRandomValues(new Uint8Array(16)); // Salt for HKDF
+                const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
+
+                if (isFileMode) {
+                    // --- File Mode: Encrypt then Chunk Upload ---
+                    const file = fileInput.files[0];
+                    if (!file) {
+                        throw new Error("请选择一个文件。");
+                    }
+                    const maxSizeBytes = maxFileSizeMB * 1024 * 1024;
+                    if (file.size > maxSizeBytes) {
+                        throw new Error('文件大小超过限制 (' + maxFileSizeMB + ' MB)。');
+                    }
+
+                    showStatus("正在读取文件...");
+                    const dataBuffer = await file.arrayBuffer();
+
+                    showStatus("正在加密文件 (这可能需要一些时间)...");
+                    // Encrypt the entire file content first
+                    const { encryptedContent, iv } = await encryptData(dataBuffer, encryptionKey);
+
+                    // Now handle the chunk upload of the encrypted content
+                    await handleChunkUpload(file.name, file.size, encryptedContent, iv, salt, masterKeyBase64);
+
+                } else {
+                    // --- Text Mode: Use original /api/store ---
+                    const message = messageTextarea.value;
+                    if (!message.trim()) {
+                        throw new Error("请输入文本消息。");
+                    }
+                    const dataBuffer = new TextEncoder().encode(message);
+                    showStatus("正在加密文本...");
+
+                    const { encryptedContent, iv } = await encryptData(dataBuffer, encryptionKey);
+
+                    const encryptedBase64 = arrayBufferToBase64(encryptedContent);
+                    const ivBase64 = arrayBufferToBase64(iv);
+                    const saltBase64 = arrayBufferToBase64(salt);
+
+                    showStatus("正在将加密数据发送到服务器...");
+
+                    const payload = {
+                        encryptedData: encryptedBase64, // Send full encrypted data for text
+                        iv: ivBase64,
+                        salt: saltBase64,
+                    };
+
+                    const response = await fetch('/api/store', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({ error: '无法解析服务器错误响应' }));
+                        throw new Error('服务器错误 (' + response.status + '): ' + (errorData.error || response.statusText));
+                    }
+
+                    const resultData = await response.json();
+                    if (!resultData.id) {
+                        throw new Error("服务器未能返回数据 ID。");
+                    }
+
+                    const dataId = resultData.id;
+                    const shareUrl = window.location.origin + window.location.pathname + '?id=' + dataId + '#' + masterKeyBase64;
+                    showResult(shareUrl);
+                }
+
+            } catch (error) {
+                console.error("处理过程中出错:", error);
+                showStatus('错误: ' + error.message, true);
+            } finally {
+                // setLoading(false); // handleChunkUpload will manage loading state for file uploads
+                if (!isFileMode) { // Only reset loading if it was text mode
+                    setLoading(false);
+                }
             }
-            downloadAndDecryptFile(id); // Call without keyData
-          } catch (error) {
-            document.getElementById('content').innerText = '喵呜~ 解析密钥数据时出错：' + error.message;
-          }
-        } else if (type === 'message') {
-          fetch('/get-message?id=' + id)
-            .then(response => {
-              if (!response.ok) throw new Error('HTTP error! status: ' + response.status);
-              return response.json();
-            })
-            .then(async data => {
-              if (data.message === "The message has been burned!") {
-                document.getElementById('content').innerText = '喵呜~ ' + data.message;
-              } else if (data.error) {
-                throw new Error(data.error);
-              } else {
-                const privateKey = await openpgp.readPrivateKey({ armoredKey: atob(key) });
-                const message = await openpgp.readMessage({ armoredMessage: data.message });
-                const { data: decrypted } = await openpgp.decrypt({
-                  message,
-                  decryptionKeys: privateKey
+        });
+
+        // --- Chunk Upload Functions ---
+        async function handleChunkUpload(originalFilename, originalFilesize, encryptedFileBuffer, iv, salt, masterKeyBase64) {
+            showStatus("正在初始化分片上传...");
+
+            // 1. Initialize Upload
+            let uploadId;
+            try {
+                const initResponse = await fetch('/api/upload/init', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fileName: originalFilename, fileSize: originalFilesize }) // Send original size
                 });
-                document.getElementById('content').innerText = decrypted;
-              }
-            })
-            .catch(error => {
-              document.getElementById('content').innerText = '喵呜~ 错误: ' + error.message;
-            });
-        } else {
-          document.getElementById('content').innerText = '喵呜~ 无效的类型参数。';
+                if (!initResponse.ok) {
+                    const errorData = await initResponse.json().catch(() => ({ message: '初始化上传失败' }));
+                    throw new Error('初始化失败 (' + initResponse.status + '): ' + errorData.message);
+                }
+                const initData = await initResponse.json();
+                uploadId = initData.uploadId;
+                if (!uploadId) {
+                    throw new Error("未能从服务器获取 Upload ID。");
+                }
+                console.log("Upload initialized with ID:", uploadId);
+            } catch (error) {
+                showStatus('错误: ' + error.message, true);
+                setLoading(false);
+                return; // Stop upload process
+            }
+
+            // 2. Upload Chunks
+            const totalChunks = Math.ceil(encryptedFileBuffer.byteLength / CHUNK_SIZE);
+            console.log('Starting chunk upload: ' + totalChunks + ' chunks');
+
+            for (let chunkNumber = 1; chunkNumber <= totalChunks; chunkNumber++) {
+                const start = (chunkNumber - 1) * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, encryptedFileBuffer.byteLength);
+                const chunkBlob = new Blob([encryptedFileBuffer.slice(start, end)]);
+
+                showStatus('正在上传分片 ' + chunkNumber + ' / ' + totalChunks + '...');
+
+                const formData = new FormData();
+                formData.append('uploadId', uploadId);
+                formData.append('chunkNumber', chunkNumber.toString());
+                formData.append('totalChunks', totalChunks.toString());
+                formData.append('fileName', originalFilename); // Send original filename
+                formData.append('fileSize', originalFilesize.toString()); // Send original filesize
+                formData.append('chunk', chunkBlob, 'chunk_' + chunkNumber); // Add chunk blob
+
+                try {
+                    const chunkResponse = await fetch('/api/upload/chunk', {
+                        method: 'POST',
+                        body: formData // Send as FormData
+                    });
+
+                    if (!chunkResponse.ok) {
+                        const errorData = await chunkResponse.json().catch(() => ({ message: '上传分片 ' + chunkNumber + ' 失败' }));
+                        throw new Error('上传分片 ' + chunkNumber + ' 失败 (' + chunkResponse.status + '): ' + errorData.message);
+                    }
+                    const chunkResult = await chunkResponse.json();
+                    console.log('Chunk ' + chunkNumber + ' uploaded:', chunkResult.message);
+
+                } catch (error) {
+                    showStatus('错误: ' + error.message, true);
+                    setLoading(false);
+                    return; // Stop upload process
+                }
+            }
+
+            // 3. Finalize Upload (Polling and Metadata Storage)
+            showStatus("所有分片上传完毕，正在等待服务器合并...");
+            await finalizeUpload(uploadId, iv, salt, originalFilename, masterKeyBase64);
         }
-      }
-    });
-  </script>
+
+        async function finalizeUpload(uploadId, iv, salt, originalFilename, masterKeyBase64) {
+            const pollInterval = 3000; // Poll every 3 seconds
+            let attempts = 0;
+            const maxAttempts = 20; // Max 1 minute of polling
+
+            const poll = async () => {
+                attempts++;
+                if (attempts > maxAttempts) {
+                    throw new Error("服务器合并超时。请稍后再试。");
+                }
+
+                try {
+                    const statusResponse = await fetch('/api/upload/status?uploadId=' + uploadId);
+                    if (!statusResponse.ok) {
+                        // If status is 404, it might mean the merge failed and cleaned up, or still processing
+                        if (statusResponse.status === 404) {
+                             console.log('Polling attempt ' + attempts + ': Upload status not found yet.');
+                             setTimeout(poll, pollInterval); // Continue polling
+                             return;
+                        }
+                        const errorData = await statusResponse.json().catch(() => ({ message: '检查状态失败' }));
+                        throw new Error('检查状态失败 (' + statusResponse.status + '): ' + errorData.message);
+                    }
+
+                    const statusData = await statusResponse.json();
+
+                    if (statusData.completed) {
+                        console.log("Server reported merge completed.");
+                        showStatus("文件合并成功，正在存储元数据...");
+
+                        // Store metadata using the new endpoint
+                        const ivBase64 = arrayBufferToBase64(iv);
+                        const saltBase64 = arrayBufferToBase64(salt);
+                        const metadataPayload = {
+                            id: uploadId,
+                            iv: ivBase64,
+                            salt: saltBase64,
+                            originalFilename: originalFilename
+                        };
+
+                        const metaResponse = await fetch('/api/store/metadata', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(metadataPayload)
+                        });
+
+                        if (!metaResponse.ok) {
+                            const errorData = await metaResponse.json().catch(() => ({ error: '存储元数据失败' }));
+                            throw new Error('存储元数据失败 (' + metaResponse.status + '): ' + errorData.error);
+                        }
+
+                        console.log("Metadata stored successfully for ID:", uploadId);
+                        const shareUrl = window.location.origin + window.location.pathname + '?id=' + uploadId + '#' + masterKeyBase64;
+                        showResult(shareUrl);
+                        setLoading(false); // Final success
+
+                    } else {
+                        // Not completed yet, poll again
+                        console.log('Polling attempt ' + attempts + ': Merge not complete yet.');
+                        showStatus('正在等待服务器合并... (' + attempts + '/' + maxAttempts + ')');
+                        setTimeout(poll, pollInterval);
+                    }
+                } catch (error) {
+                    showStatus('错误: ' + error.message, true);
+                    setLoading(false);
+                }
+            };
+
+            setTimeout(poll, pollInterval); // Start polling
+        }
+
+        // --- Decryption Logic (on page load if URL contains ID and Key) ---
+        async function handleDecryptionOnLoad() {
+            console.log('handleDecryptionOnLoad triggered.'); // <-- 添加日志 1
+            const urlParams = new URLSearchParams(window.location.search);
+            const dataId = urlParams.get('id');
+            const masterKeyBase64 = window.location.hash.substring(1); // Get key from URL fragment
+
+            if (dataId && masterKeyBase64) {
+                console.log('Found dataId:', dataId, 'and masterKeyBase64:', masterKeyBase64 ? 'present' : 'missing'); // <-- 添加日志 2
+                hideMessages();
+                contentAreaDiv.classList.remove('hidden');
+                decryptedContentDiv.innerHTML = '正在获取元数据...';
+                setLoading(true); // Use loader visually
+
+                let metadata;
+                let iv;
+                let salt;
+                let originalFilename;
+
+                 try {
+                    // 1. Fetch data from /api/data/:id - This endpoint now returns different structures based on content type
+                    decryptedContentDiv.innerHTML = '正在获取数据...';
+                    const response = await fetch('/api/data/' + dataId);
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                            throw new Error("数据未找到或已被销毁。");
+                        }
+                        const errorData = await response.json().catch(() => ({ error: '无法解析服务器响应' }));
+                        throw new Error('获取数据时服务器错误 (' + response.status + '): ' + (errorData.error || response.statusText));
+                    console.log('Received data from /api/data:', JSON.stringify(responseData)); // <-- Log received data
+                    }
+                    const responseData = await response.json();
+
+                    // 2. Check response format to determine if it's text or file metadata
+                    // Check for lowercase keys based on Go struct 'json' tags for StoredData
+                    if (responseData.encryptedData && responseData.iv && responseData.salt) { // Check lowercase keys
+                        // --- Handle Text Message Decryption ---
+                        decryptedContentDiv.innerHTML = '正在解密文本消息...';
+                        iv = base64ToArrayBuffer(responseData.iv); // Use lowercase
+                        salt = base64ToArrayBuffer(responseData.salt); // Use lowercase
+                        const encryptedData = base64ToArrayBuffer(responseData.encryptedData); // Use lowercase
+
+                        // 3. Decrypt Text
+                        const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
+                        const decryptedBuffer = await decryptData(encryptedData, iv, encryptionKey);
+
+                        // 4. Display Text
+                        const decryptedText = new TextDecoder().decode(decryptedBuffer);
+                        decryptedContentDiv.textContent = decryptedText;
+                        decryptedContentDiv.innerHTML += "<br><br><small>消息将在销毁后从服务器删除。</small>";
+
+                        // 5. Burn Text Data
+                        try {
+                            await fetch('/api/burn/' + dataId, { method: 'POST' });
+                            console.log("Burn request sent for text data ID:", dataId);
+                        } catch (burnError) {
+                            console.warn("发送销毁文本请求失败:", burnError);
+                            decryptedContentDiv.innerHTML += "<br><strong style='color:orange;'>警告：无法自动销毁服务器上的文本数据。</strong>";
+                        }
+
+                    } else if (responseData.iv && responseData.salt) { // Check lowercase keys for metadata too
+                        // --- Handle File Download and Decryption ---
+                        // Response might contain metadata with lowercase keys if StoredMetadata isn't used or marshaled differently
+                        decryptedContentDiv.innerHTML = '获取到文件元数据，正在下载加密文件...';
+                        iv = base64ToArrayBuffer(responseData.iv); // Use lowercase
+                        salt = base64ToArrayBuffer(responseData.salt); // Use lowercase
+                        originalFilename = responseData.originalFilename; // Use lowercase
+
+                        // 3. Fetch Encrypted File Content
+                        const downloadResponse = await fetch('/api/download/' + dataId); // Assume /api/download handles file retrieval
+                        if (!downloadResponse.ok) {
+                            if (downloadResponse.status === 404) {
+                                throw new Error("加密文件内容未找到或已被销毁。");
+                            }
+                            throw new Error('下载加密文件时服务器错误 (' + downloadResponse.status + '): ' + downloadResponse.statusText);
+                        }
+
+                        decryptedContentDiv.innerHTML = '文件下载完成，正在解密...';
+                        const encryptedFileBuffer = await downloadResponse.arrayBuffer();
+
+                        // 4. Decrypt File
+                        const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
+                        const decryptedBuffer = await decryptData(encryptedFileBuffer, iv, encryptionKey);
+
+                        // 5. Trigger File Download
+                        const filenameToUse = originalFilename || ('decrypted_file_' + dataId + '.bin'); // Fallback filename
+                        decryptedContentDiv.innerHTML = '文件已解密: <strong>' + filenameToUse + '</strong><br>准备下载...';
+                        const blob = new Blob([decryptedBuffer]);
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filenameToUse;
+                        console.log('Triggering download for:', filenameToUse);
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        decryptedContentDiv.innerHTML += "<br>下载已开始。文件将在下载后从服务器销毁。";
+
+                        // 6. Burn File Data
+                        try {
+                            // Assuming the same burn endpoint works for data stored via file flow
+                            await fetch('/api/burn/' + dataId, { method: 'POST' });
+                            console.log("Burn request sent for file data ID:", dataId);
+                        } catch (burnError) {
+                            console.warn("发送销毁文件请求失败:", burnError);
+                            decryptedContentDiv.innerHTML += "<br><strong style='color:orange;'>警告：无法自动销毁服务器上的文件数据。</strong>";
+                        }
+
+                    } else {
+                        // Invalid response format from /api/data/:id
+                        throw new Error("从服务器接收到的数据格式无效或不完整。");
+                    }
+
+                } catch (error) {
+                    console.error("解密/获取过程中出错:", error);
+                    contentAreaDiv.classList.remove('hidden'); // Ensure area is visible for error
+                    decryptedContentDiv.innerHTML = '<span style="color:red;">错误: ' + error.message + '</span>';
+                } finally {
+                    setLoading(false);
+                }
+            }
+        }
+
+         // --- Initial Setup ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            console.log("DOM fully loaded.");
+             // Fetch config first
+            try {
+                const configResponse = await fetch('/config');
+                if (configResponse.ok) {
+                    const configData = await configResponse.json();
+                    if (configData.maxFileSizeMB) {
+                        maxFileSizeMB = parseInt(configData.maxFileSizeMB, 10);
+                        console.log('Max file size loaded from config:', maxFileSizeMB, 'MB');
+                    } else {
+                         console.warn('Config endpoint did not return maxFileSizeMB.');
+                    }
+                } else {
+                    console.warn('Failed to load config from server, using default max file size:', maxFileSizeMB, 'MB');
+                }
+            } catch (error) {
+                console.error('Error fetching config:', error);
+                 showStatus('无法加载服务器配置: ' + error.message, true);
+            }
+
+
+            // Then handle decryption if needed
+            handleDecryptionOnLoad();
+        });
+
+    </script>
 </body>
 </html>
+\`
 
-`
+var config *Config // Global config variable
 
 func main() {
 	// Parse command line flags
 	configFile := flag.String("config", "config.yaml", "path to config file")
 	flag.Parse()
 
-	config, err := LoadConfig(*configFile)
+	var err error
+	config, err = LoadConfig(*configFile) // Assign to global config
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	// 确保 config 在后续路由处理中可用
 
-	// Database check removed
+	// Ensure directories for chunk uploads exist
+	ensureDirectoriesExist() // From chunk_upload.go
+
+	// Ensure data storage directory exists (moved from api_handlers.go for clarity)
+	if err := ensureDataStorageDir(); err != nil {
+		log.Fatalf("Failed to ensure data storage directory exists: %v", err)
+	}
+
 	// Use 0.0.0.0 to bind to all interfaces inside the container, or use config value if needed
 	host := "0.0.0.0" // Or use config.Server.Host if you want it configurable
 	port := strconv.Itoa(config.Server.Port)
 	log.Printf("Server running on %s:%s", host, port)
 
-	// No database initialization needed
-
 	// 设置 Gin 为 release 模式以提高性能
 	gin.SetMode(gin.ReleaseMode)
-	router := gin.Default()
+	// Disable Gin's default logging to avoid duplicate timestamps if using custom log
+	// router := gin.New()
+	// router.Use(gin.Recovery()) // Use recovery middleware
+	router := gin.Default()               // Or keep default if its logging is acceptable
+	router.MaxMultipartMemory = 512 << 20 // 512 MiB
 
-	// 确保分片上传所需的目录存在
-	ensureDirectoriesExist()
-
-	// Check storage permissions
-	if err := CheckStoragePermissions(); err != nil {
-		log.Fatalf("Storage permissions check failed: %v", err)
-	}
-
+	// CORS Configuration
 	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowAllOrigins = true
+	corsConfig.AllowAllOrigins = true // Be careful in production, restrict if possible
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
 
@@ -820,34 +701,47 @@ func main() {
 
 	// 处理根路径，返回嵌入的HTML内容
 	router.GET("/", func(c *gin.Context) {
-		c.Header("Content-Type", "text/html")
-		c.String(http.StatusOK, indexHTML)
+		// Check if the request is for the root path specifically
+		// Also handle direct access with ID and fragment (key) for decryption page
+		if (c.Request.URL.Path == "/" && c.Request.URL.RawQuery == "" && c.Request.URL.Fragment == "") ||
+			(strings.HasPrefix(c.Request.URL.RawQuery, "id=") && c.Request.URL.Fragment != "") {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(http.StatusOK, indexHTML) // Serve the same HTML, JS will handle decryption
+		} else {
+			// Optional: Handle other paths or return 404
+			// For simplicity, we can also just serve indexHTML for any GET request
+			// that isn't an API endpoint, letting the JS handle routing/display.
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(http.StatusOK, indexHTML)
+			// Alternatively, return 404:
+			// c.String(http.StatusNotFound, "404 Not Found")
+		}
 	})
 
-	router.POST("/save-message", saveMessage)
-	// 将 config 传递给 SaveFileHandler
-	router.POST("/save-file", func(c *gin.Context) {
-		SaveFileHandler(c, config)
-	})
-	router.GET("/get-message", getMessage)
-	router.GET("/get-file", getFile)
-	router.POST("/burn-file", burnFileHandler) // 添加销毁文件的路由
-	router.POST("/generate-short-link", generateShortLink)
-	router.GET("/s/:shortCode", redirect)
+	// --- New API Endpoints ---
+	router.POST("/api/store", StoreDataHandler)              // Stores encrypted data, returns ID
+	router.GET("/api/data/:id", GetDataHandler)              // Gets encrypted data, IV, Salt by ID
+	router.POST("/api/burn/:id", BurnDataHandler)            // Burns data by ID
+	router.POST("/api/store/metadata", StoreMetadataHandler) // Stores metadata after chunk upload
+	router.GET("/api/download/:id", DownloadHandler)         // Downloads the merged encrypted file
 
-	// --- 分片上传路由 ---
-	router.POST("/upload/init", InitUploadHandler)         // 初始化上传
-	router.POST("/upload/chunk", ChunkUploadHandler)       // 上传分片
-	router.GET("/upload/status", CheckUploadStatusHandler) // 检查上传状态
-	// --- 结束分片上传路由 ---
+	// --- Chunk Upload Endpoints ---
+	uploadGroup := router.Group("/api/upload")
+	{
+		// Pass config to handlers if they need it (ChunkUploadHandler might need max chunk size later)
+		uploadGroup.POST("/init", InitUploadHandler)
+		uploadGroup.POST("/chunk", ChunkUploadHandler) // Consider passing config if needed
+		uploadGroup.GET("/status", CheckUploadStatusHandler)
+	}
 
-	// --- 新增：返回配置信息的端点 ---
+	// --- 返回配置信息的端点 (保持) ---
 	router.GET("/config", func(c *gin.Context) {
 		if config == nil {
 			// 确保 config 已加载
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server configuration not loaded"})
 			return
 		}
+		// 只返回前端需要的信息
 		c.JSON(http.StatusOK, gin.H{
 			"maxFileSizeMB": config.Server.MaxFileSizeMB,
 		})
@@ -859,4 +753,17 @@ func main() {
 	if err := router.Run(fmt.Sprintf("%s:%s", host, port)); err != nil {
 		log.Fatalf("Failed to start HTTP server: %v", err)
 	}
+}
+
+// ensureDataStorageDir ensures the directory for storing data files exists.
+// It's defined here to be accessible by main.
+func ensureDataStorageDir() error {
+	dataDir := filepath.Join("storage", "data") // Consistent path
+	// Use MkdirAll which creates parent directories if needed and doesn't return error if dir exists
+	if err := os.MkdirAll(dataDir, 0750); err != nil { // Use 0750 for better permissions
+		log.Printf("Error creating data storage directory '%s': %v", dataDir, err)
+		return fmt.Errorf("failed to create data storage directory: %w", err)
+	}
+	log.Printf("Data storage directory ensured: %s", dataDir)
+	return nil
 }
