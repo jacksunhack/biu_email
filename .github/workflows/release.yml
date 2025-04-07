@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v1.0.0'  # 匹配v开头的tag，如v1.0.0
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # 设置Go环境
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      
+      # 构建二进制文件
+      - name: Build
+        run: |
+          go build -o ./bin/biu_email
+          tar -czf biu_email-${{ github.ref_name }}.tar.gz -C ./bin biu_email
+      
+      # 创建GitHub Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            biu_email-${{ github.ref_name }}.tar.gz
+            README.md
+            config.yaml
+          draft: false
+          prerelease: false
+      
+      # 构建并推送Docker镜像
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+      
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_HUB_USERNAME }}/biu_email:${{ github.ref_name }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/biu_email:latest
