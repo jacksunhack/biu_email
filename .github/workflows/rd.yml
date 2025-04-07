@@ -1,4 +1,4 @@
-name: Release and Docker Push
+name: Release Go App, Binaries, and Docker Image
 
 on:
   push:
@@ -7,18 +7,66 @@ on:
   workflow_dispatch: # Allow manual triggering
 
 env:
-  IMAGE_NAME: biu_email
-  # DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are now correctly referenced via secrets directly where needed
+  IMAGE_NAME: biu_email         # Your application/image base name
+  GO_VERSION: '1.21'           # Specify the Go version to use
+  # The Go binary name expected/produced. Adjust if needed.
+  # Using IMAGE_NAME for consistency, assuming go build produces 'biu_email'
+  GO_BINARY_NAME: biu_email
 
 jobs:
-  build-and-push:
+  # Job 1: Build Go Binaries for Linux
+  build-go:
+    name: Build Go Binaries
+    runs-on: ubuntu-latest
+    outputs:
+      # Pass the artifact name to the release job
+      binary_artifact_name: ${{ steps.artifact_upload.outputs.artifact-name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Go Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Build Go Binary (Linux AMD64)
+        # This produces a binary generally compatible with modern Linux distros (Ubuntu, Debian, CentOS)
+        # Add more GOOS/GOARCH combinations here if needed, adjusting output names
+        run: |
+          echo "Building for linux/amd64..."
+          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o ./bin/${{ env.GO_BINARY_NAME }}-linux-amd64 .
+          echo "Build complete."
+          ls -lh ./bin # List built files for verification
+        # CGO_ENABLED=0 can often help create more portable static binaries if you don't use CGo
+        # env:
+        #   CGO_ENABLED: 0
+
+      - name: Upload Go Binaries Artifact
+        id: artifact_upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-binaries-${{ github.ref_name }} # Unique name including tag
+          path: ./bin/* # Upload all files in the bin directory
+
+  # Job 2: Build and Push Docker Image (Depends on Code Checkout Only)
+  build-and-push-docker:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    # --- Add permissions block here ---
+    # Needs permissions to write packages (GHCR)
     permissions:
-      contents: read    # Needed for actions/checkout
-      packages: write   # Needed to push docker image to GHCR
-    # ----------------------------------
+      contents: read    # Needed for checkout
+      packages: write   # Needed for ghcr push
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -51,7 +99,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }} # Use github.actor or github.repository_owner
+          username: ${{ github.repository_owner }} # Correct username for GHCR
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata (tags, labels) for Docker
@@ -60,42 +108,86 @@ jobs:
         with:
           images: |
             ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }} # Use github.repository_owner
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          # This automatically creates tags like '1.0.0', 'latest' from tag 'v1.0.0'
 
-      # --- Combine Build and Push step ---
-      - name: Build and push to Docker Hub and GHCR
+      - name: Build and push Docker image
+        id: build-push
         uses: docker/build-push-action@v5
         with:
-          context: .
-          push: true # Push is enabled
-          tags: ${{ steps.meta.outputs.tags }} # Use ALL generated tags
-          labels: ${{ steps.meta.outputs.labels }} # Use generated labels
-      # --- Removed the separate GHCR push step ---
+          context: . # Assumes Dockerfile is in the root
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Optional: Add build args if your Dockerfile needs them
+          # build-args: |
+          #   VERSION=${{ github.ref_name }}
+          # Cache settings can speed up builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
+      - name: Print Image Details
+        run: |
+          echo "Docker Image Tags: ${{ steps.meta.outputs.tags }}"
+          echo "Docker Image Digest: ${{ steps.build-push.outputs.digest }}"
+
+
+  # Job 3: Create GitHub Release (Depends on Go Build and Docker Push)
   create-release:
-    name: Create Release
-    needs: build-and-push
+    name: Create GitHub Release
+    needs: [build-go, build-and-push-docker] # Run after binaries and image are ready
     runs-on: ubuntu-latest
-    # --- Add permissions block here too ---
-    # Need contents: write to create a release
+    # Needs write permission for contents to create releases/upload assets
     permissions:
       contents: write
-    # ------------------------------------
+    # Only run this job for actual tag pushes, not manual dispatch unless intended
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4 # Checkout is still needed to get the tag info
+      # No code checkout needed here IF we only use downloaded artifacts and context vars
 
-      - name: Create Release
+      - name: Download Go Binaries Artifact
+        uses: actions/download-artifact@v4
+        with:
+          # Use the output from the build job to get the correct artifact name
+          name: ${{ needs.build-go.outputs.binary_artifact_name }}
+          path: ./release-assets # Download to a specific directory
+
+      - name: List downloaded files # For debugging
+        run: ls -R ./release-assets
+
+      - name: Create Release Notes Body
+        id: release_notes
+        run: |
+          # Construct the body for the release notes
+          echo "## Release Notes for ${{ github.ref_name }}" >> release_body.md
+          echo "" >> release_body.md
+          echo "This release includes the compiled application binaries and updated Docker images." >> release_body.md
+          echo "" >> release_body.md
+          echo "**Docker Images:**" >> release_body.md
+          echo "- Docker Hub: \`${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}\` (and \`latest\`)" >> release_body.md
+          echo "- GitHub Packages: \`ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}\` (and \`latest\`)" >> release_body.md
+          echo "" >> release_body.md
+          echo "**Assets:**" >> release_body.md
+          echo "- Compiled Linux (amd64) binary attached below." >> release_body.md
+          echo "- Source code archives (zip/tar.gz) automatically added by GitHub." >> release_body.md
+          # Save the body to an output variable
+          body_content=$(cat release_body.md)
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$body_content" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+
+      - name: Create GitHub Release and Upload Binaries
         uses: softprops/action-gh-release@v1
         with:
           name: Release ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body: |
-            Automated release for ${{ github.ref_name }}
-            Docker images pushed to:
-            - Docker Hub: ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}
-            - GitHub Packages: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }} # Use github.repository_owner
+          body_path: release_body.md # Use the generated notes file
+          # Upload the specific binary files downloaded from the artifact
+          # Use a glob pattern matching files inside the download directory
+          files: ./release-assets/*
           draft: false
           prerelease: false
-        # env: # GITHUB_TOKEN is automatically used by softprops/action-gh-release
-        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This line is usually not needed
+        env:
+          # GITHUB_TOKEN is automatically used by the action
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
