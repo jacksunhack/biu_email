@@ -1,7 +1,5 @@
 name: Release Go App, Binaries, and Docker Image
 
-# Trigger this workflow ONLY on pushes of tags starting with 'v'
-# OR when manually triggered via the Actions UI
 on:
   push:
     tags:
@@ -9,105 +7,67 @@ on:
   workflow_dispatch: # Allow manual triggering
 
 env:
-  IMAGE_NAME: biu_email         # Your application/image base name
-  GO_VERSION: '1.21'           # Specify the Go version to use
-  # The Go binary name expected/produced. Adjust if needed.
-  # Using IMAGE_NAME for consistency, assuming go build produces 'biu_email'
-  GO_BINARY_NAME: biu_email
+  IMAGE_NAME: biu_email         # 应用/镜像基础名称
+  GO_VERSION: '1.21'            # 指定 Go 版本
+  GO_BINARY_NAME: biu_email      # Go 编译生成的二进制名称
 
 jobs:
-  # Job 1: Build Go Binaries for Linux
   build-go:
     name: Build Go Binaries
     runs-on: ubuntu-latest
     outputs:
-      # Pass the artifact name to the release job
-      binary_artifact_name: ${{ steps.artifact_upload.outputs.artifact-name }}
-      # Pass the tag name (extracted cleanly) to the release job
-      tag_name: ${{ steps.extract_tag.outputs.tag }}
+      binary_artifact_name: ${{ steps.upload_artifact.outputs.artifact-name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        # Fetch all history for all tags and branches, needed for release notes if using git history later
-        with:
-          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      # --- Cache Fix: Clean cache dir BEFORE restore attempt ---
-      - name: Clean Go module cache before restore
-        run: go clean -modcache
-
       - name: Go Cache
-        id: go-cache # Give the cache step an ID for potential cache hit checking
         uses: actions/cache@v4
         with:
-          # Cache both downloaded modules and build cache
           path: |
-            ~/go/pkg/mod
             ~/.cache/go-build
-          # Improved key including Go version
-          key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-${{ env.GO_VERSION }}-
             ${{ runner.os }}-go-
 
-      # --- Ensure modules are present after cache step ---
-      - name: Download Go Modules (if cache miss)
-        # This runs fast on cache hit, ensures modules exist on miss
-        if: steps.go-cache.outputs.cache-hit != 'true'
-        run: go mod download
+      - name: Create bin directory
+        run: mkdir -p ./bin
 
-      - name: Build Go Binary (Linux AMD64)
+      - name: Build Go Binary for Ubuntu/Debian
         run: |
-          echo "Building for linux/amd64..."
-          # Ensure output directory exists
-          mkdir -p ./bin
-          # Build statically linked binary (usually more portable) if possible/needed
-          # Add ldflags to strip debug info and potentially set version info
-          # Example: go build -ldflags="-s -w -X main.version=${{ steps.extract_tag.outputs.tag }}" ...
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ./bin/${{ env.GO_BINARY_NAME }}-linux-amd64 .
-          echo "Build complete."
+          echo "Building for linux/amd64 (Ubuntu/Debian)..."
+          # 这里使用 CGO_ENABLED=0 生成静态二进制，适用于大多数发行版
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ./bin/${{ env.GO_BINARY_NAME }}-ubuntu-debian .
+          echo "Build complete for Ubuntu/Debian."
           ls -lh ./bin
 
-      # --- Extract tag name cleanly for use in artifact name and outputs ---
-      - name: Extract tag name
-        id: extract_tag
-        # GITHUB_REF for tags is 'refs/tags/vX.Y.Z', we just want 'vX.Y.Z'
-        # For workflow_dispatch, use 'manual-run' or similar as a fallback if needed
+      - name: Build Go Binary for CentOS
         run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          if [[ -z "$TAG_NAME" || "$TAG_NAME" == "$GITHUB_REF" ]]; then
-            # Handle case where it's not a tag push (e.g., manual run)
-            # You might want a different behavior for manual runs
-            echo "Not a tag push or invalid tag format. Using 'manual' for tag."
-            TAG_NAME="manual-${{ github.run_id }}" # Example fallback
-          fi
-          echo "TAG_NAME=${TAG_NAME}"
-          echo "tag=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "Building for linux/amd64 (CentOS)..."
+          # 如果需要针对 CentOS 做特殊处理，可在此调整参数
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ./bin/${{ env.GO_BINARY_NAME }}-centos .
+          echo "Build complete for CentOS."
+          ls -lh ./bin
 
       - name: Upload Go Binaries Artifact
-        id: artifact_upload
+        id: upload_artifact
         uses: actions/upload-artifact@v4
         with:
-          # Use the extracted tag name for the artifact
-          name: go-binaries-${{ steps.extract_tag.outputs.tag }}
-          path: ./bin/* # Upload all files in the bin directory
-          # Set artifact name in output for the release job
-          retention-days: 7 # Optional: Keep artifacts for a week
+          name: go-binaries-${{ github.ref_name }}
+          path: ./bin/*
 
-
-  # Job 2: Build and Push Docker Image (Depends on Code Checkout Only)
   build-and-push-docker:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    # Needs permissions to write packages (GHCR)
     permissions:
-      contents: read    # Needed for checkout
-      packages: write   # Needed for ghcr push
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -140,7 +100,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.repository_owner }} # Correct username for GHCR
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata (tags, labels) for Docker
@@ -148,106 +108,74 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            # Docker Hub image name
             ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}
-            # GHCR image name
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
-          # This automatically generates appropriate tags:
-          # - On 'v1.2.3' tag push: generates '1.2.3', 'latest'
-          # - On manual trigger (often from main): generates 'main', 'latest' (if enabled for branch push)
-          # Add flavor configuration if you need 'v' prefix on Docker tags
-          # flavor:
-          #   prefix=v,onlatest=true
 
       - name: Build and push Docker image
         id: build-push
         uses: docker/build-push-action@v5
         with:
-          context: . # Assumes Dockerfile is in the root
-          # Only push if it's a tag push OR a manual trigger (adjust if needed)
-          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          context: .
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Add cache for faster builds
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Optional: Add build args if your Dockerfile needs them
-          # build-args: |
-          #   VERSION=${{ github.ref_name }}
 
       - name: Print Image Details
-        if: steps.build-push.outputs.digest # Only print if digest was generated (i.e., build happened)
         run: |
           echo "Docker Image Tags: ${{ steps.meta.outputs.tags }}"
           echo "Docker Image Digest: ${{ steps.build-push.outputs.digest }}"
 
-
-  # Job 3: Create GitHub Release (Depends on Go Build and Docker Push)
   create-release:
     name: Create GitHub Release
-    needs: [build-go, build-and-push-docker] # Run after binaries and image are ready
+    needs: [build-go, build-and-push-docker]
     runs-on: ubuntu-latest
-    # --- Permissions needed to create a release and upload assets ---
     permissions:
       contents: write
-    # --- CRITICAL: Ensure this job ONLY runs for actual v* tag pushes ---
-    # It checks the Git reference directly. Manual runs ('workflow_dispatch')
-    # will have a different ref (like refs/heads/main) and will skip this job.
     if: startsWith(github.ref, 'refs/tags/v')
-    # -------------------------------------------------------------------
     steps:
-      # No code checkout needed here, we use artifacts and context vars
-
       - name: Download Go Binaries Artifact
         uses: actions/download-artifact@v4
         with:
-          # Use the output from the build job to get the correct artifact name
           name: ${{ needs.build-go.outputs.binary_artifact_name }}
-          path: ./release-assets # Download to a specific directory
+          path: ./release-assets
 
-      - name: List downloaded files # For debugging
+      - name: Create Source Code Archive
+        run: |
+          mkdir -p release-assets
+          git archive --format=tar.gz -o release-assets/source-${{ github.ref_name }}.tar.gz HEAD
+
+      - name: List downloaded and generated files
         run: ls -R ./release-assets
 
       - name: Create Release Notes Body
         id: release_notes
         run: |
-          # Get the tag name from the build job's output
-          TAG_NAME="${{ needs.build-go.outputs.tag_name }}"
+          echo "## Release Notes for ${{ github.ref_name }}" > release_body.md
+          echo "" >> release_body.md
+          echo "This release includes the compiled application binaries and updated Docker images." >> release_body.md
+          echo "" >> release_body.md
+          echo "**Docker Images:**" >> release_body.md
+          echo "- Docker Hub: \`${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}\` (and \`latest\`)" >> release_body.md
+          echo "- GitHub Packages: \`ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}\` (and \`latest\`)" >> release_body.md
+          echo "" >> release_body.md
+          echo "**Assets:**" >> release_body.md
+          echo "- Compiled binaries for Ubuntu/Debian and CentOS." >> release_body.md
+          echo "- Source code archive." >> release_body.md
+          body_content=$(cat release_body.md)
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$body_content" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-          # Construct the body for the release notes using Markdown
-          cat << EOF > release_body.md
-          ## Release Notes for ${TAG_NAME}
-
-          Automated release for version ${TAG_NAME}.
-
-          This release includes the compiled application binaries for Linux (amd64) and updated Docker images.
-
-          **Docker Images:**
-          *   Docker Hub: \`${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:${TAG_NAME}\` (and potentially \`latest\`)
-          *   GitHub Packages: \`ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${TAG_NAME}\` (and potentially \`latest\`)
-
-          **Assets:**
-          *   Compiled Linux (amd64) binary attached below.
-          *   Source code archives (.zip/.tar.gz) automatically added by GitHub.
-
-          *(You can add more detailed release notes here, perhaps generated from commit messages or a CHANGELOG)*
-          EOF
-
-          echo "Release notes generated in release_body.md"
-          cat release_body.md # Print the notes for debugging
-
-      - name: Create GitHub Release and Upload Binaries
+      - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v1
-        # Ensure environment has GITHUB_TOKEN
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Use the tag name from the build job output
-          name: Release ${{ needs.build-go.outputs.tag_name }}
-          tag_name: ${{ needs.build-go.outputs.tag_name }}
-          # Use the generated notes file
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
           body_path: release_body.md
-          # Use a glob pattern to upload all files downloaded into the assets directory
           files: ./release-assets/*
           draft: false
-          prerelease: false # Set to true if your tag indicates a pre-release (e.g., v1.0.0-beta)
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
