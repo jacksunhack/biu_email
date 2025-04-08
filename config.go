@@ -13,22 +13,21 @@ type Config struct {
 		Version string `yaml:"version"`
 	} `yaml:"application"`
 	Paths struct {
-		Storage           string `yaml:"storage"`
-		Database          string `yaml:"database"`
-		GenerateShortLink string `yaml:"generate_short_link"`
-		GetFile           string `yaml:"get_file"`
-		GetMessage        string `yaml:"get_message"`
-		IndexHTML         string `yaml:"index_html"`
-		MainGo            string `yaml:"main_go"`
-		Redirect          string `yaml:"redirect"`
-		SaveFile          string `yaml:"save_file"`
-		SaveMessage       string `yaml:"save_message"`
+		// DataStorageDir: Directory to store metadata JSON files.
+		DataStorageDir string `yaml:"data_storage_dir"`
+		// FinalUploadDir: Directory to store the final merged uploaded files.
+		FinalUploadDir string `yaml:"final_upload_dir"`
+		// TempChunkDir: Directory to store temporary file chunks during upload.
+		TempChunkDir string `yaml:"temp_chunk_dir"`
+		// LogFilePath: Path for the application log file (defined under Logging).
+		// LogFilePath string `yaml:"log_file_path"` // Keep this under Logging section
 	} `yaml:"paths"`
 	Server struct {
-		Host          string `yaml:"host"`
-		Port          int    `yaml:"port"`
-		MaxFileSizeMB int    `yaml:"max_file_size_mb"` // 新增：最大文件上传大小 (MB)
-		TLS           struct {
+		Host           string   `yaml:"host"`
+		Port           int      `yaml:"port"`
+		MaxFileSizeMB  int      `yaml:"max_file_size_mb"`          // 新增：最大文件上传大小 (MB)
+		AllowedOrigins []string `yaml:"allowed_origins,omitempty"` // 新增：允许的 CORS 来源
+		TLS            struct {
 			Enabled  bool   `yaml:"enabled"`
 			Domain   string `yaml:"domain"`
 			Email    string `yaml:"email"`

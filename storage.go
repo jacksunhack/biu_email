@@ -10,55 +10,48 @@ import (
 )
 
 type ShortLink struct {
-	URL      string
-	Accessed bool
+	URL      string `json:"url"`      // Ensure JSON tags match if needed
+	Accessed bool   `json:"accessed"` // Ensure JSON tags match if needed
 }
 
 var (
 	shortLinks = make(map[string]ShortLink)
 	mu         sync.RWMutex
-	storageDir = "/app/storage" // Use absolute path inside container
-	linksFile  = filepath.Join(storageDir, "shortlinks.json")
+	// Removed global storageDir and linksFile variables
 )
 
-// CheckStoragePermissions checks if storage directory is writable
-func CheckStoragePermissions() error {
-	mu.Lock()
-	defer mu.Unlock()
+// InitStorage initializes the short link storage by loading links from the configured path.
+// It should be called once during application startup after config is loaded.
+func InitStorage(config *Config) error {
+	storageDir := config.Paths.DataStorageDir // Use configured path
+	// linksFile := filepath.Join(storageDir, "shortlinks.json") // Removed, calculated within load/saveLinks
 
-	// Create directory if not exists
-	if err := os.MkdirAll(storageDir, 0755); err != nil {
-		return fmt.Errorf("failed to create storage directory: %v", err)
+	// Ensure storage directory exists
+	if err := os.MkdirAll(storageDir, 0750); err != nil { // Use more restrictive permissions
+		log.Printf("[Storage] Error creating storage directory '%s': %v", storageDir, err)
+		return fmt.Errorf("failed to ensure storage directory: %w", err)
 	}
+	log.Printf("[Storage] Ensured storage directory exists: %s", storageDir)
 
-	// Check if directory is writable by creating a test file
-	testFile := filepath.Join(storageDir, ".test")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		return fmt.Errorf("storage directory is not writable: %v", err)
-	}
-	_ = os.Remove(testFile)
-	return nil
+	// Load existing links
+	return loadLinks(config) // Pass config to loadLinks
 }
 
-func init() {
-	if err := os.MkdirAll(storageDir, 0755); err != nil {
-		log.Printf("Error creating storage directory: %v", err)
-	}
-	loadLinks()
-}
-
-func SetShortLink(code, url string) {
+// SetShortLink adds or updates a short link and saves it to the file.
+func SetShortLink(config *Config, code, url string) error { // Accept config
 	mu.Lock()
 	defer mu.Unlock()
 	shortLinks[code] = ShortLink{
 		URL:      url,
 		Accessed: false,
 	}
-	saveLinks()
+	return saveLinks(config) // Pass config to saveLinks
 }
 
-func GetShortLink(code string) (string, bool, bool) {
-	mu.Lock() // Need write lock to mark as accessed
+// GetShortLink retrieves a short link URL, marks it as accessed, and saves the updated state.
+// It returns the URL, a boolean indicating if it was already accessed, and a boolean indicating if the code exists.
+func GetShortLink(config *Config, code string) (string, bool, bool) { // Accept config
+	mu.Lock() // Need write lock to mark as accessed and save
 	defer mu.Unlock()
 
 	link, exists := shortLinks[code]
@@ -70,76 +63,85 @@ func GetShortLink(code string) (string, bool, bool) {
 	// Check if already accessed
 	if link.Accessed {
 		log.Printf("[Storage] Link %s was already accessed", code)
-		return "", true, true
+		return link.URL, true, true // Return URL even if accessed, but indicate it was accessed
 	}
 
 	// Mark as accessed and save
 	link.Accessed = true
 	shortLinks[code] = link
-	saveLinks()
+	err := saveLinks(config) // Pass config to saveLinks
+	if err != nil {
+		// Log the error, but still return the link for this access attempt
+		log.Printf("[Storage] ERROR saving link state after access for code %s: %v", code, err)
+	}
 
 	log.Printf("[Storage] Returning first-time access for code %s: %s", code, link.URL)
 	return link.URL, false, true
 }
 
-func loadLinks() {
-	mu.Lock() // Use write lock for loading as it modifies the map
+// loadLinks loads the short links from the JSON file specified in the config.
+func loadLinks(config *Config) error { // Accept config
+	// Note: This function assumes the caller (InitStorage) holds the necessary lock if needed,
+	// but since InitStorage is called once at startup, direct locking here is fine too.
+	// Let's keep the lock here for clarity.
+	mu.Lock()
 	defer mu.Unlock()
+
+	storageDir := config.Paths.DataStorageDir
+	linksFile := filepath.Join(storageDir, "shortlinks.json")
 	log.Println("[Storage] Attempting to load links from file:", linksFile)
-	data, err := os.ReadFile(linksFile)
-	// Initialize map first in case of errors or empty file
+
+	// Initialize map first
 	shortLinks = make(map[string]ShortLink)
+
+	data, err := os.ReadFile(linksFile) // Use os.ReadFile
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("[Storage] Error reading links file: %v. Starting with empty map.", err)
-		} else {
-			log.Println("[Storage] Links file not found, starting with empty map.")
+			log.Printf("[Storage] Error reading links file '%s': %v. Starting with empty map.", linksFile, err)
+			// Return the error instead of just logging
+			return fmt.Errorf("error reading links file: %w", err)
 		}
-		return // Start with empty map
+		log.Println("[Storage] Links file not found, starting with empty map.")
+		return nil // File not existing is not an error for initialization
 	}
 
-	// Check if file is empty
 	if len(data) == 0 {
 		log.Println("[Storage] Links file is empty, starting with empty map.")
-		return
+		return nil
 	}
 
-	// Try to unmarshal into new format first
+	// Try unmarshaling directly into the current format
 	if err := json.Unmarshal(data, &shortLinks); err != nil {
-		// Fallback to old format (map[string]string)
-		var oldLinks map[string]string
-		if err := json.Unmarshal(data, &oldLinks); err != nil {
-			log.Printf("[Storage] Error unmarshaling links file: %v. Starting with empty map.", err)
-			shortLinks = make(map[string]ShortLink)
-			return
-		}
-		// Convert old format to new
-		for k, v := range oldLinks {
-			shortLinks[k] = ShortLink{
-				URL:      v,
-				Accessed: false, // Assume not accessed before
-			}
-		}
-		log.Printf("[Storage] Converted %d legacy links to new format", len(oldLinks))
+		log.Printf("[Storage] Error unmarshaling links file '%s': %v. Starting with empty map.", linksFile, err)
+		shortLinks = make(map[string]ShortLink) // Reset map on error
+		// Return the unmarshaling error
+		return fmt.Errorf("error parsing links file: %w", err)
 	}
-	log.Printf("[Storage] Successfully loaded %d short links from file.", len(shortLinks))
+
+	log.Printf("[Storage] Successfully loaded %d short links from file '%s'.", len(shortLinks), linksFile)
+	return nil
 }
 
-// saveLinks is called internally by SetShortLink which already holds the write lock.
-// No need for separate locking here.
-func saveLinks() {
-	log.Printf("[Storage] Attempting to save %d links to file: %s", len(shortLinks), linksFile)
-	// Marshal the current state of the global shortLinks map directly
+// saveLinks saves the current state of shortLinks to the JSON file specified in the config.
+// This function assumes the caller holds the necessary write lock (mu.Lock).
+func saveLinks(config *Config) error { // Accept config
+	storageDir := config.Paths.DataStorageDir
+	linksFile := filepath.Join(storageDir, "shortlinks.json")
+	// log.Printf("[Storage] Attempting to save %d links to file: %s", len(shortLinks), linksFile) // Reduce log verbosity
+
 	data, err := json.MarshalIndent(shortLinks, "", "  ")
 	if err != nil {
-		log.Printf("[Storage] Error marshaling links: %v", err)
-		return
+		log.Printf("[Storage] ERROR marshaling links: %v", err)
+		return fmt.Errorf("failed to marshal links: %w", err)
 	}
 
 	// WriteFile handles file creation/truncation
-	if err := os.WriteFile(linksFile, data, 0644); err != nil {
-		log.Printf("[Storage] Error writing links file: %v", err)
-	} else {
-		log.Printf("[Storage] Successfully saved links to file.")
+	if err := os.WriteFile(linksFile, data, 0640); err != nil { // Use more restrictive permissions
+		log.Printf("[Storage] ERROR writing links file '%s': %v", linksFile, err)
+		return fmt.Errorf("failed to write links file: %w", err)
 	}
+	// log.Printf("[Storage] Successfully saved links to file.") // Reduce log verbosity
+	return nil
 }
+
+// Removed CheckStoragePermissions function as InitStorage handles directory creation.

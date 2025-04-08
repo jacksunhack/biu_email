@@ -35,12 +35,15 @@ WORKDIR /app
 COPY --from=builder --chown=appuser:appgroup /app/biu_email .
 COPY --from=builder --chown=appuser:appgroup /app/config.yaml .
 
-# Create directories and set permissions
-RUN mkdir -p /app/{messages,temp-files,logs,storage} && \
-    chmod -R 777 /app/messages && \
-    chown -R appuser:appgroup /app && \
-    chmod -R 777 /app/storage && \
-    chmod 664 /app/biu_email.db || true
+# Create necessary directories for data persistence
+# Note: 'uploads' directory is also needed based on docker-compose.yml and code
+RUN mkdir -p /app/messages /app/temp-files /app/logs /app/storage /app/uploads
+
+# Change ownership of the entire /app directory and its contents to the non-root user
+# This ensures the application running as appuser can write to the necessary subdirectories
+# (messages, temp-files, logs, storage, uploads) which will be mounted as volumes.
+# No need for overly permissive chmod 777. The default permissions combined with correct ownership should suffice.
+RUN chown -R appuser:appgroup /app
 
 # Switch to the non-root user
 USER appuser

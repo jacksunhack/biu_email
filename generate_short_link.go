@@ -11,27 +11,35 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func generateShortLink(c *gin.Context) {
-	longUrl := c.PostForm("longUrl")
-	if longUrl == "" {
-		log.Println("Long URL not provided")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Long URL not provided"})
-		return
-	}
+// generateShortLink handles creating a short link for a given long URL.
+func generateShortLink(config *Config) gin.HandlerFunc { // Accept config
+	return func(c *gin.Context) { // Return the actual handler
+		longUrl := c.PostForm("longUrl")
+		if longUrl == "" {
+			log.Println("Long URL not provided")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Long URL not provided"})
+			return
+		}
 
-	log.Printf("Received long URL: %s", longUrl)
+		log.Printf("Received long URL: %s", longUrl)
 
-	shortCode := generateShortCode()
-	log.Printf("Generated short code: %s", shortCode)
+		shortCode := generateShortCode()
+		log.Printf("Generated short code: %s", shortCode)
 
-	log.Printf("Storing short link: %s -> %s", shortCode, longUrl)
-	SetShortLink(shortCode, longUrl)
-	log.Printf("Successfully stored short link in memory")
+		log.Printf("Storing short link: %s -> %s", shortCode, longUrl)
+		err := SetShortLink(config, shortCode, longUrl) // Pass config
+		if err != nil {
+			log.Printf("[ShortLink] Error saving short link %s -> %s: %v", shortCode, longUrl, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save short link data"})
+			return
+		}
+		log.Printf("Successfully stored short link in memory")
 
-	shortUrl := fmt.Sprintf("http://%s/s/%s", c.Request.Host, shortCode)
-	log.Printf("Generated short URL: %s", shortUrl)
+		shortUrl := fmt.Sprintf("http://%s/s/%s", c.Request.Host, shortCode)
+		log.Printf("Generated short URL: %s", shortUrl)
 
-	c.JSON(http.StatusOK, gin.H{"shortUrl": shortUrl})
+		c.JSON(http.StatusOK, gin.H{"shortUrl": shortUrl})
+	} // Close returned handler
 }
 
 func generateShortCode() string {

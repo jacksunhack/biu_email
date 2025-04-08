@@ -670,12 +670,19 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Ensure directories for chunk uploads exist
-	ensureDirectoriesExist() // From chunk_upload.go
+	// Ensure directories for chunk uploads exist and handle potential errors
+	if err := EnsureUploadDirectoriesExist(config); err != nil { // Call renamed function and check error
+		log.Fatalf("Failed to ensure upload directories exist: %v", err)
+	}
 
 	// Ensure data storage directory exists (moved from api_handlers.go for clarity)
 	if err := ensureDataStorageDir(); err != nil {
 		log.Fatalf("Failed to ensure data storage directory exists: %v", err)
+	}
+
+	// Initialize storage after loading config
+	if err := InitStorage(config); err != nil {
+		log.Fatalf("Failed to initialize storage: %v", err)
 	}
 
 	// Use 0.0.0.0 to bind to all interfaces inside the container, or use config value if needed
@@ -692,10 +699,25 @@ func main() {
 	router.MaxMultipartMemory = 512 << 20 // 512 MiB
 
 	// CORS Configuration
-	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowAllOrigins = true // Be careful in production, restrict if possible
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
+	corsConfig := cors.DefaultConfig() // Start with defaults
+
+	// Check if allowed origins are specified in the config
+	if len(config.Server.AllowedOrigins) > 0 {
+		log.Printf("Configuring CORS with allowed origins: %v", config.Server.AllowedOrigins)
+		corsConfig.AllowOrigins = config.Server.AllowedOrigins
+		corsConfig.AllowAllOrigins = false // Explicitly disable AllowAllOrigins if specific origins are set
+	} else {
+		// If no origins are specified in config, disallow all cross-origin requests for better security.
+		// Alternatively, you could keep AllowAllOrigins = true for easier local dev, but log a warning.
+		log.Println("Warning: No allowed_origins specified in config.yaml. Disallowing all cross-origin requests.")
+		corsConfig.AllowOrigins = []string{} // Ensure it's an empty list
+		corsConfig.AllowAllOrigins = false
+	}
+
+	// Keep other default or necessary settings
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"} // Adjust methods as needed
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"} // Adjust headers as needed
+	corsConfig.AllowCredentials = true                                            // Allow credentials if needed
 
 	router.Use(cors.New(corsConfig))
 
@@ -718,20 +740,25 @@ func main() {
 		}
 	})
 
-	// --- New API Endpoints ---
-	router.POST("/api/store", StoreDataHandler)              // Stores encrypted data, returns ID
-	router.GET("/api/data/:id", GetDataHandler)              // Gets encrypted data, IV, Salt by ID
-	router.POST("/api/burn/:id", BurnDataHandler)            // Burns data by ID
-	router.POST("/api/store/metadata", StoreMetadataHandler) // Stores metadata after chunk upload
-	router.GET("/api/download/:id", DownloadHandler)         // Downloads the merged encrypted file
+	// --- Short Link Endpoints ---
+	router.POST("/api/shorten", generateShortLink(config)) // Assuming this is the endpoint for creating short links
+	router.GET("/s/:shortCode", redirect(config))          // Endpoint for redirecting short links
+
+	// --- Data/File Handling Endpoints ---
+	// Pass the config object to the handler functions to get the actual gin.HandlerFunc
+	router.POST("/api/store", StoreDataHandler(config))              // Stores encrypted TEXT data, returns ID
+	router.GET("/api/data/:id", GetDataHandler(config))              // Gets metadata (or text data) by ID
+	router.POST("/api/burn/:id", BurnDataHandler(config))            // Burns data (metadata and potentially file) by ID
+	router.POST("/api/store/metadata", StoreMetadataHandler(config)) // Stores file metadata after chunk upload
+	router.GET("/api/download/:id", DownloadHandler(config))         // Downloads the merged encrypted file
 
 	// --- Chunk Upload Endpoints ---
 	uploadGroup := router.Group("/api/upload")
 	{
-		// Pass config to handlers if they need it (ChunkUploadHandler might need max chunk size later)
-		uploadGroup.POST("/init", InitUploadHandler)
-		uploadGroup.POST("/chunk", ChunkUploadHandler) // Consider passing config if needed
-		uploadGroup.GET("/status", CheckUploadStatusHandler)
+		// Pass the config object to the handler functions
+		uploadGroup.POST("/init", InitUploadHandler(config))
+		uploadGroup.POST("/chunk", ChunkUploadHandler(config))
+		uploadGroup.GET("/status", CheckUploadStatusHandler(config))
 	}
 
 	// --- 返回配置信息的端点 (保持) ---
