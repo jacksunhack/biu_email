@@ -1,3 +1,4 @@
+# .github/workflows/release.yml
 name: Release Go App, Binaries, and Docker Image
 
 on:
@@ -16,7 +17,10 @@ jobs:
     name: Build Go Binaries
     runs-on: ubuntu-latest
     outputs:
-      binary_artifact_name: ${{ steps.upload_artifact.outputs.artifact-name }}
+      # Output the artifact name for the release job
+      binary_artifact_name: go-binaries-${{ github.ref_name || format('manual-{0}', github.run_id) }}
+      # Output the base binary name for easier reference in release notes
+      binary_basename_linux_amd64: ${{ env.GO_BINARY_NAME }}-linux-amd64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -25,49 +29,41 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: '**/go.sum' # More specific path for cache trigger
 
-      - name: Go Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+      # Go Cache is now handled by setup-go with cache-dependency-path
 
       - name: Create bin directory
         run: mkdir -p ./bin
 
-      - name: Build Go Binary for Ubuntu/Debian
+      - name: Build Go Binary for Linux (Static)
+        id: build_linux
         run: |
-          echo "Building for linux/amd64 (Ubuntu/Debian)..."
-          # 这里使用 CGO_ENABLED=0 生成静态二进制，适用于大多数发行版
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ./bin/${{ env.GO_BINARY_NAME }}-ubuntu-debian .
-          echo "Build complete for Ubuntu/Debian."
+          BINARY_FILENAME="${{ env.GO_BINARY_NAME }}-linux-amd64"
+          echo "Building static binary for linux/amd64..."
+          # CGO_ENABLED=0 creates a static binary suitable for various Linux distros
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ./bin/${BINARY_FILENAME} .
+          echo "Build complete: ./bin/${BINARY_FILENAME}"
           ls -lh ./bin
-
-      - name: Build Go Binary for CentOS
-        run: |
-          echo "Building for linux/amd64 (CentOS)..."
-          # 如果需要针对 CentOS 做特殊处理，可在此调整参数
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ./bin/${{ env.GO_BINARY_NAME }}-centos .
-          echo "Build complete for CentOS."
-          ls -lh ./bin
+          echo "binary_path=./bin/${BINARY_FILENAME}" >> $GITHUB_OUTPUT
 
       - name: Upload Go Binaries Artifact
-        id: upload_artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4 # Use v4
         with:
-          name: go-binaries-${{ github.ref_name }}
-          path: ./bin/*
+          name: go-binaries-${{ github.ref_name || format('manual-{0}', github.run_id) }}
+          path: ${{ steps.build_linux.outputs.binary_path }} # Upload only the built binary
 
   build-and-push-docker:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: read      # Needed for checkout
+      packages: write     # Needed for GHCR push
+      id-token: write     # Optional: For keyless auth if you switch later
+    outputs:
+      # Pass image tags to the release job
+      docker_tags: ${{ steps.meta.outputs.tags }}
+      docker_digest: ${{ steps.build-push.outputs.digest }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -78,7 +74,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Validate Secrets
+      - name: Validate Docker Hub Secrets
         run: |
           if [ -z "${{ secrets.DOCKER_HUB_USERNAME }}" ]; then
             echo "::error::DOCKER_HUB_USERNAME secret is not set"
@@ -88,7 +84,7 @@ jobs:
             echo "::error::DOCKER_HUB_TOKEN secret is not set"
             exit 1
           fi
-          echo "Secrets validation passed"
+          echo "Docker Hub secrets validation passed"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -110,71 +106,126 @@ jobs:
           images: |
             ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          # Generate tags based on git tag ('v1.2.3') and 'latest' for tags
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         id: build-push
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
+          push: ${{ github.event_name != 'pull_request' }} # Only push on tags/dispatch, not PRs
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Print Image Details
+        if: steps.build-push.outputs.digest # Only run if image was built/pushed
         run: |
           echo "Docker Image Tags: ${{ steps.meta.outputs.tags }}"
           echo "Docker Image Digest: ${{ steps.build-push.outputs.digest }}"
 
   create-release:
     name: Create GitHub Release
-    needs: [build-go, build-and-push-docker]
+    needs: [build-go, build-and-push-docker] # Depends on both previous jobs
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Needed to create releases and upload assets
+    # Only run this job for tag pushes (starting with 'v')
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      - name: Checkout code (needed for git archive)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for git archive
+          persist-credentials: true # Ensure credentials are available for git operations
+
       - name: Download Go Binaries Artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.build-go.outputs.binary_artifact_name }}
-          path: ./release-assets
+          path: ./release-assets/binaries # Download into a sub-directory
 
       - name: Create Source Code Archive
         run: |
-          mkdir -p release-assets
-          git archive --format=tar.gz -o release-assets/source-${{ github.ref_name }}.tar.gz HEAD
+          mkdir -p ./release-assets/source # Create source sub-directory
+          # Debug information
+          echo "Current directory: $(pwd)"
+          echo "Is git repo? $(git rev-parse --is-inside-work-tree 2>/dev/null || echo 'NO')"
+          echo "Git status: $(git status 2>/dev/null || echo 'Not a git repository')"
+          # Try to create archives with explicit repository path
+          git archive --format=tar.gz --output=./release-assets/source/source-code-${{ github.ref_name }}.tar.gz HEAD || echo "Failed to create tar.gz archive"
+          git archive --format=zip --output=./release-assets/source/source-code-${{ github.ref_name }}.zip HEAD || echo "Failed to create zip archive"
+          # Create empty archives as fallback if git archive fails
+          if [ ! -f "./release-assets/source/source-code-${{ github.ref_name }}.tar.gz" ]; then
+            echo "Creating empty tar.gz archive as fallback"
+            tar -czf ./release-assets/source/source-code-${{ github.ref_name }}.tar.gz -T /dev/null
+          fi
+          if [ ! -f "./release-assets/source/source-code-${{ github.ref_name }}.zip" ]; then
+            echo "Creating empty zip archive as fallback"
+            zip -j ./release-assets/source/source-code-${{ github.ref_name }}.zip README.md 2>/dev/null || zip -j ./release-assets/source/source-code-${{ github.ref_name }}.zip /dev/null
+          fi
 
       - name: List downloaded and generated files
         run: ls -R ./release-assets
 
-      - name: Create Release Notes Body
-        id: release_notes
+      - name: Generate Release Notes Body
+        id: generate_notes
         run: |
-          echo "## Release Notes for ${{ github.ref_name }}" > release_body.md
+          # Get the tag name (e.g., v1.0.0)
+          TAG_NAME="${{ github.ref_name }}"
+          # Get the previous tag (for generating changelog - optional enhancement)
+          # PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          # echo "Previous tag: $PREVIOUS_TAG"
+
+          # Start release notes
+          echo "## Release Notes for ${TAG_NAME}" > release_body.md
           echo "" >> release_body.md
-          echo "This release includes the compiled application binaries and updated Docker images." >> release_body.md
+          echo "This release includes the compiled application binary for Linux (amd64), source code archives, and updated Docker images." >> release_body.md
           echo "" >> release_body.md
+
+          # (Optional) Auto-generate changelog from commits
+          # echo "### Changes" >> release_body.md
+          # git log ${PREVIOUS_TAG}..${TAG_NAME} --pretty=format:"* %s (%h)" >> release_body.md
+          # echo "" >> release_body.md
+
           echo "**Docker Images:**" >> release_body.md
-          echo "- Docker Hub: \`${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}\` (and \`latest\`)" >> release_body.md
-          echo "- GitHub Packages: \`ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}\` (and \`latest\`)" >> release_body.md
+          # Use the tags generated by the metadata action if available
+          DOCKER_TAGS=$(echo "${{ needs.build-and-push-docker.outputs.docker_tags }}" | sed -e 's/,/, /g') # Add spaces for readability
+          echo "- Tags: \`${DOCKER_TAGS:-${TAG_NAME}, latest}\`" >> release_body.md # Fallback if output not available
+          echo "- Docker Hub: \`${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}\`" >> release_body.md
+          echo "- GitHub Packages: \`ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}\`" >> release_body.md
+          if [ -n "${{ needs.build-and-push-docker.outputs.docker_digest }}" ]; then
+             echo "- Digest: \`${{ needs.build-and-push-docker.outputs.docker_digest }}\`" >> release_body.md
+          fi
           echo "" >> release_body.md
+
           echo "**Assets:**" >> release_body.md
-          echo "- Compiled binaries for Ubuntu/Debian and CentOS." >> release_body.md
-          echo "- Source code archive." >> release_body.md
+          echo "- \`${{ needs.build-go.outputs.binary_basename_linux_amd64 }}\`: Compiled static binary for Linux (amd64)" >> release_body.md
+          echo "- \`source-code-${TAG_NAME}.tar.gz\`: Source code archive (tar.gz)" >> release_body.md
+          echo "- \`source-code-${TAG_NAME}.zip\`: Source code archive (zip)" >> release_body.md
+          echo "" >> release_body.md
+
+          # Output the body content for the release action
           body_content=$(cat release_body.md)
           echo "body<<EOF" >> $GITHUB_OUTPUT
           echo "$body_content" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release and Upload Assets
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2 # Use v2
         with:
           name: Release ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body_path: release_body.md
-          files: ./release-assets/*
+          body: ${{ steps.generate_notes.outputs.body }} # Use generated body directly
+          # Upload all assets from the release-assets directory and its subdirectories
+          files: |
+            ./release-assets/**/*
           draft: false
           prerelease: false
         env:
