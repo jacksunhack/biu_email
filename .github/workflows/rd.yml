@@ -142,11 +142,7 @@ jobs:
       - name: Checkout code (needed for git archive)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetch all history for git archive
-<<<<<<< HEAD
-          persist-credentials: true # Ensure credentials are available for git operations
-=======
->>>>>>> 13d0772 (修复bug)
+            fetch-depth: 0 # Fetch all history for git archive
 
       - name: Download Go Binaries Artifact
         uses: actions/download-artifact@v4
@@ -157,27 +153,8 @@ jobs:
       - name: Create Source Code Archive
         run: |
           mkdir -p ./release-assets/source # Create source sub-directory
-<<<<<<< HEAD
-          # Debug information
-          echo "Current directory: $(pwd)"
-          echo "Is git repo? $(git rev-parse --is-inside-work-tree 2>/dev/null || echo 'NO')"
-          echo "Git status: $(git status 2>/dev/null || echo 'Not a git repository')"
-          # Try to create archives with explicit repository path
-          git archive --format=tar.gz --output=./release-assets/source/source-code-${{ github.ref_name }}.tar.gz HEAD || echo "Failed to create tar.gz archive"
-          git archive --format=zip --output=./release-assets/source/source-code-${{ github.ref_name }}.zip HEAD || echo "Failed to create zip archive"
-          # Create empty archives as fallback if git archive fails
-          if [ ! -f "./release-assets/source/source-code-${{ github.ref_name }}.tar.gz" ]; then
-            echo "Creating empty tar.gz archive as fallback"
-            tar -czf ./release-assets/source/source-code-${{ github.ref_name }}.tar.gz -T /dev/null
-          fi
-          if [ ! -f "./release-assets/source/source-code-${{ github.ref_name }}.zip" ]; then
-            echo "Creating empty zip archive as fallback"
-            zip -j ./release-assets/source/source-code-${{ github.ref_name }}.zip README.md 2>/dev/null || zip -j ./release-assets/source/source-code-${{ github.ref_name }}.zip /dev/null
-          fi
-=======
           git archive --format=tar.gz -o ./release-assets/source/source-code-${{ github.ref_name }}.tar.gz HEAD
           git archive --format=zip -o ./release-assets/source/source-code-${{ github.ref_name }}.zip HEAD
->>>>>>> 13d0772 (修复bug)
 
       - name: List downloaded and generated files
         run: ls -R ./release-assets
