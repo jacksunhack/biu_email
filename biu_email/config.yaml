@@ -1,0 +1,32 @@
+application:
+  name: Encrypted Anonymous Note
+server:
+  # Host should be 0.0.0.0 to listen on all interfaces inside the container,
+  # making it accessible via the port mapping from the host.
+  host: 0.0.0.0
+  port: 3003
+  max_file_size_mb: 200 # 新增：默认最大文件上传大小为 15MB
+  # allowed_origins: 允许访问 API 的前端来源列表。
+  # 在生产环境中，请务必修改为你的前端域名。
+  # 如果列表为空或未定义，将不允许任何跨域请求（除非 AllowAllOrigins 在代码中被强制设为 true）。
+  allowed_origins:
+    - http://localhost:3003 # 本地开发环境
+    - http://127.0.0.1:3003 # 本地开发环境
+    # - https://your-frontend-domain.com # 生产环境前端域名
+paths: # Corrected indentation
+  # 存储元数据 JSON 文件的目录 (相对于 /app)
+  data_storage_dir: storage/data
+  # 存储最终合并文件的目录 (相对于 /app)
+  final_upload_dir: uploads
+  # 存储临时分片的目录 (相对于 /app)
+  temp_chunk_dir: temp-files
+logging:
+  level: DEBUG
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    console: {}
+    file:
+      # Path relative to the application's working directory (/app)
+      path: logs/application.log
+
+# Database section removed

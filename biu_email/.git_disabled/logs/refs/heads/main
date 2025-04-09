@@ -1,0 +1,27 @@
+0000000000000000000000000000000000000000 226332f002410299a80101527aea9b7a6b03441a jacksunhack <f1tz@duck.com> 1743937646 +0800	clone: from https://github.com/jacksunhack/biu_email.git
+226332f002410299a80101527aea9b7a6b03441a ecf8562c9dc8a97fc451fdb8137f08cfe2ff42a7 jacksunhack <f1tz@duck.com> 1744007512 +0800	commit: 修复问题
+ecf8562c9dc8a97fc451fdb8137f08cfe2ff42a7 6e1980c5f9d0423a5694a1e7f70900a67e294881 jacksunhack <f1tz@duck.com> 1744008245 +0800	commit (merge): Merge tag 'main' of https://github.com/jacksunhack/biu_email
+6e1980c5f9d0423a5694a1e7f70900a67e294881 394854342c83af8a055ff087954cef89fd4f9832 jacksunhack <f1tz@duck.com> 1744008427 +0800	commit: delete test file
+394854342c83af8a055ff087954cef89fd4f9832 1532ffc77fa181d8ffb1638780a184955b61e795 jacksunhack <f1tz@duck.com> 1744020175 +0800	pull: Fast-forward
+1532ffc77fa181d8ffb1638780a184955b61e795 13d07728b1791ea47a3e1e5fafe7e97dd4cfafd8 jacksunhack <f1tz@duck.com> 1744115223 +0800	commit: 修复bug
+13d07728b1791ea47a3e1e5fafe7e97dd4cfafd8 e2c59e2d25454cd44293fd19d2153c09e4264aa5 jacksunhack <f1tz@duck.com> 1744116026 +0800	rebase (finish): refs/heads/main onto b1d7b40fcca844ff647dc9bb1df59cb312e22de6
+e2c59e2d25454cd44293fd19d2153c09e4264aa5 5c3580c36bdd9449396b5068066a8f01fb7a41d6 jacksunhack <f1tz@duck.com> 1744159458 +0800	commit: 修改rd.yml
+5c3580c36bdd9449396b5068066a8f01fb7a41d6 3dc7314a1a086b24d3c1f59b2c2135774b7b8e86 jacksunhack <f1tz@duck.com> 1744159470 +0800	pull --rebase origin main (finish): refs/heads/main onto 7f52b3b3ca15b0990786038425815d8f450ce285
+3dc7314a1a086b24d3c1f59b2c2135774b7b8e86 69fedd0d34241f86e88dcb6ae70a65cf1561f59a jacksunhack <f1tz@duck.com> 1744160252 +0800	commit: 修改Go 为1.24.1
+69fedd0d34241f86e88dcb6ae70a65cf1561f59a 1f3f995c0816530437bf2d8ba9fbd5301cc2f8c7 jacksunhack <f1tz@duck.com> 1744160261 +0800	pull --rebase origin main (finish): refs/heads/main onto a3851c956dce73864dbf60a38fde427bf91ff08a
+1f3f995c0816530437bf2d8ba9fbd5301cc2f8c7 941df379e8649f6506087855af0acb23f5f47990 jacksunhack <f1tz@duck.com> 1744165089 +0800	commit: 修改go.mod
+941df379e8649f6506087855af0acb23f5f47990 951a114c5bdc44ab41ed980a36612b5a99de9cb2 jacksunhack <f1tz@duck.com> 1744165107 +0800	pull --rebase origin main (finish): refs/heads/main onto 41a7816fa96f815610b26e2d22ad0e049eabf3a7
+951a114c5bdc44ab41ed980a36612b5a99de9cb2 a237d4ab2096561cbcc5897c77268de0c92628e8 jacksunhack <f1tz@duck.com> 1744165555 +0800	commit: 修改go版本号
+a237d4ab2096561cbcc5897c77268de0c92628e8 4218bbd7f48746d028cfa8a8db00e0d626f26458 jacksunhack <f1tz@duck.com> 1744165776 +0800	commit: cache disable
+4218bbd7f48746d028cfa8a8db00e0d626f26458 418831b4fb5f6a17345fb8497196978fdc2c27a2 jacksunhack <f1tz@duck.com> 1744166946 +0800	commit: edit rd
+418831b4fb5f6a17345fb8497196978fdc2c27a2 835e470a123512b1918c33a41b1fe884d121ca65 jacksunhack <f1tz@duck.com> 1744167342 +0800	commit: edit rd
+835e470a123512b1918c33a41b1fe884d121ca65 498b6669d78e484e080f21c6f24d4668f6f40420 jacksunhack <f1tz@duck.com> 1744167844 +0800	commit: edit rd
+498b6669d78e484e080f21c6f24d4668f6f40420 44b5fe6faae46ae3fd9f3e5f16ec4b20ef40cebf jacksunhack <f1tz@duck.com> 1744168323 +0800	commit: edit rd
+44b5fe6faae46ae3fd9f3e5f16ec4b20ef40cebf 953048767a5a616b1766861d922ab486f8155eb2 jacksunhack <f1tz@duck.com> 1744169292 +0800	commit: edit .github
+953048767a5a616b1766861d922ab486f8155eb2 4e9d569894e037bea3007b1420757abad9122093 jacksunhack <f1tz@duck.com> 1744169641 +0800	commit: Add GitHub Actions and Docker support
+4e9d569894e037bea3007b1420757abad9122093 b8e6fe85689b5c8dbe57be92da7cffc911554987 jacksunhack <f1tz@duck.com> 1744169766 +0800	commit: Add GitHub Actions and Docker support
+b8e6fe85689b5c8dbe57be92da7cffc911554987 4695d5531cbcedbcb4928bcc697a31b57653a7fe jacksunhack <f1tz@duck.com> 1744170582 +0800	commit: edit .github
+4695d5531cbcedbcb4928bcc697a31b57653a7fe dffafc0434475f11031c531f62806f4431d238bc jacksunhack <f1tz@duck.com> 1744170728 +0800	pull --rebase origin main (finish): refs/heads/main onto 3f633648fd91f615506bf4f2db23fc58c3a9966c
+dffafc0434475f11031c531f62806f4431d238bc 830259b727497c70b737bf4bfa2842fa1d2738e9 jacksunhack <f1tz@duck.com> 1744171148 +0800	commit: Add GitHub Actions and Docker support
+830259b727497c70b737bf4bfa2842fa1d2738e9 6f36ca2e6960cdd4892505061b18379288c61c84 jacksunhack <f1tz@duck.com> 1744171974 +0800	commit: Add GitHub Actions and Docker support
+6f36ca2e6960cdd4892505061b18379288c61c84 6e7054a9df30887993d628b35032b1cb037b692f jacksunhack <f1tz@duck.com> 1744179197 +0800	commit: add to push releases
