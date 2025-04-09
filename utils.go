@@ -2,11 +2,20 @@ package main
 
 import (
 	"log"
+	mathRand "math/rand"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+// 初始化随机数生成器
+func init() {
+	// 使用当前时间作为种子初始化 math/rand
+	mathRand.Seed(time.Now().UnixNano())
+	log.Println("Random number generator initialized")
+}
 
 // isValidUUID checks if the provided string is a valid UUID and doesn't contain path traversal characters.
 // Used for data IDs (text or file metadata).
@@ -24,27 +33,15 @@ func IsValidUUID(id string) bool {
 	return err == nil
 }
 
-// isValidUploadID checks if the provided string is a valid upload ID format (e.g., hex)
-// and doesn't contain path traversal characters. Used for chunk upload IDs.
-func IsValidUploadID(id string) bool {
-	// Basic check for path traversal characters
-	if strings.Contains(id, "..") || strings.Contains(id, "/") || strings.Contains(id, "\\") {
-		log.Printf("[Validation] Invalid characters found in upload ID: %s", id)
+// IsValidUploadID 验证上传ID是否符合预期格式（32位十六进制字符）
+func IsValidUploadID(uploadID string) bool {
+	// 检查长度是否为32位（MD5哈希的十六进制表示长度）
+	if len(uploadID) != 32 {
 		return false
 	}
-	// Check if it looks like a hex string (assuming MD5 hash length)
-	// Note: This assumes upload IDs are always 32-char hex strings. Adjust if format changes.
-	if len(id) != 32 {
-		log.Printf("[Validation] Invalid length for upload ID: %s (expected 32)", id)
-		return false
-	}
-	// Use a precompiled regex for efficiency if called frequently
-	// var validHexRegex = regexp.MustCompile(`^[a-fA-F0-9]+$`)
-	// return validHexRegex.MatchString(id)
-	// For one-off checks, MatchString is fine:
-	match, _ := regexp.MatchString(`^[a-fA-F0-9]+$`, id) // Use regexp.MatchString
-	if !match {
-		log.Printf("[Validation] Invalid hex format for upload ID: %s", id)
-	}
+	// 检查是否只包含有效的十六进制字符
+	match, _ := regexp.MatchString("^[0-9a-f]{32}$", uploadID)
 	return match
 }
+
+// 更多工具函数可以根据需要添加在这里...

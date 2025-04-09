@@ -9,139 +9,202 @@ import (
 	"sync"
 )
 
-type ShortLink struct {
-	URL      string `json:"url"`      // Ensure JSON tags match if needed
-	Accessed bool   `json:"accessed"` // Ensure JSON tags match if needed
+// StorageManager 管理数据存储的结构体
+type StorageManager struct {
+	config    *Config
+	linksLock sync.RWMutex
+	links     map[string]string
+	dataDir   string
 }
 
 var (
-	shortLinks = make(map[string]ShortLink)
-	mu         sync.RWMutex
-	// Removed global storageDir and linksFile variables
+	storageManager *StorageManager
+	managerLock    sync.RWMutex
 )
 
-// InitStorage initializes the short link storage by loading links from the configured path.
-// It should be called once during application startup after config is loaded.
+// InitStorage 初始化存储管理器
 func InitStorage(config *Config) error {
-	storageDir := config.Paths.DataStorageDir // Use configured path
-	// linksFile := filepath.Join(storageDir, "shortlinks.json") // Removed, calculated within load/saveLinks
+	managerLock.Lock()
+	defer managerLock.Unlock()
 
-	// Ensure storage directory exists
-	if err := os.MkdirAll(storageDir, 0750); err != nil { // Use more restrictive permissions
-		log.Printf("[Storage] Error creating storage directory '%s': %v", storageDir, err)
-		return fmt.Errorf("failed to ensure storage directory: %w", err)
+	if storageManager != nil {
+		return nil // 已经初始化
 	}
-	log.Printf("[Storage] Ensured storage directory exists: %s", storageDir)
 
-	// Load existing links
-	return loadLinks(config) // Pass config to loadLinks
+	dataDir := filepath.Join(config.Paths.DataStorageDir, "data")
+	if err := os.MkdirAll(dataDir, 0750); err != nil {
+		return fmt.Errorf("创建数据目录失败: %w", err)
+	}
+
+	storageManager = &StorageManager{
+		config:  config,
+		links:   make(map[string]string),
+		dataDir: dataDir,
+	}
+
+	// 加载现有短链接
+	return storageManager.loadLinks()
 }
 
-// SetShortLink adds or updates a short link and saves it to the file.
-func SetShortLink(config *Config, code, url string) error { // Accept config
-	mu.Lock()
-	defer mu.Unlock()
-	shortLinks[code] = ShortLink{
-		URL:      url,
-		Accessed: false,
-	}
-	return saveLinks(config) // Pass config to saveLinks
+// GetStorageManager 获取存储管理器实例
+func GetStorageManager() *StorageManager {
+	managerLock.RLock()
+	defer managerLock.RUnlock()
+	return storageManager
 }
 
-// GetShortLink retrieves a short link URL, marks it as accessed, and saves the updated state.
-// It returns the URL, a boolean indicating if it was already accessed, and a boolean indicating if the code exists.
-func GetShortLink(config *Config, code string) (string, bool, bool) { // Accept config
-	mu.Lock() // Need write lock to mark as accessed and save
-	defer mu.Unlock()
+// loadLinks 从文件加载短链接映射
+func (sm *StorageManager) loadLinks() error {
+	sm.linksLock.Lock()
+	defer sm.linksLock.Unlock()
 
-	link, exists := shortLinks[code]
-	if !exists {
-		log.Printf("[Storage] Code %s not found in map.", code)
-		return "", false, false
-	}
+	linksFile := filepath.Join(sm.dataDir, "shortlinks.json")
+	log.Printf("[Storage] 尝试从文件加载链接: %s", linksFile)
 
-	// Check if already accessed
-	if link.Accessed {
-		log.Printf("[Storage] Link %s was already accessed", code)
-		return link.URL, true, true // Return URL even if accessed, but indicate it was accessed
-	}
-
-	// Mark as accessed and save
-	link.Accessed = true
-	shortLinks[code] = link
-	err := saveLinks(config) // Pass config to saveLinks
+	data, err := os.ReadFile(linksFile)
 	if err != nil {
-		// Log the error, but still return the link for this access attempt
-		log.Printf("[Storage] ERROR saving link state after access for code %s: %v", code, err)
-	}
-
-	log.Printf("[Storage] Returning first-time access for code %s: %s", code, link.URL)
-	return link.URL, false, true
-}
-
-// loadLinks loads the short links from the JSON file specified in the config.
-func loadLinks(config *Config) error { // Accept config
-	// Note: This function assumes the caller (InitStorage) holds the necessary lock if needed,
-	// but since InitStorage is called once at startup, direct locking here is fine too.
-	// Let's keep the lock here for clarity.
-	mu.Lock()
-	defer mu.Unlock()
-
-	storageDir := config.Paths.DataStorageDir
-	linksFile := filepath.Join(storageDir, "shortlinks.json")
-	log.Println("[Storage] Attempting to load links from file:", linksFile)
-
-	// Initialize map first
-	shortLinks = make(map[string]ShortLink)
-
-	data, err := os.ReadFile(linksFile) // Use os.ReadFile
-	if err != nil {
-		if !os.IsNotExist(err) {
-			log.Printf("[Storage] Error reading links file '%s': %v. Starting with empty map.", linksFile, err)
-			// Return the error instead of just logging
-			return fmt.Errorf("error reading links file: %w", err)
+		if os.IsNotExist(err) {
+			log.Println("[Storage] 链接文件未找到，从空映射开始。")
+			return nil
 		}
-		log.Println("[Storage] Links file not found, starting with empty map.")
-		return nil // File not existing is not an error for initialization
+		return fmt.Errorf("读取链接文件失败: %w", err)
 	}
 
 	if len(data) == 0 {
-		log.Println("[Storage] Links file is empty, starting with empty map.")
+		log.Println("[Storage] 链接文件为空，从空映射开始。")
 		return nil
 	}
 
-	// Try unmarshaling directly into the current format
-	if err := json.Unmarshal(data, &shortLinks); err != nil {
-		log.Printf("[Storage] Error unmarshaling links file '%s': %v. Starting with empty map.", linksFile, err)
-		shortLinks = make(map[string]ShortLink) // Reset map on error
-		// Return the unmarshaling error
-		return fmt.Errorf("error parsing links file: %w", err)
+	if err := json.Unmarshal(data, &sm.links); err != nil {
+		return fmt.Errorf("解析链接文件失败: %w", err)
 	}
 
-	log.Printf("[Storage] Successfully loaded %d short links from file '%s'.", len(shortLinks), linksFile)
+	log.Printf("[Storage] 成功加载了 %d 个短链接", len(sm.links))
 	return nil
 }
 
-// saveLinks saves the current state of shortLinks to the JSON file specified in the config.
-// This function assumes the caller holds the necessary write lock (mu.Lock).
-func saveLinks(config *Config) error { // Accept config
-	storageDir := config.Paths.DataStorageDir
-	linksFile := filepath.Join(storageDir, "shortlinks.json")
-	// log.Printf("[Storage] Attempting to save %d links to file: %s", len(shortLinks), linksFile) // Reduce log verbosity
+// SaveLinks 保存短链接映射到文件
+func (sm *StorageManager) SaveLinks() error {
+	sm.linksLock.RLock()
+	defer sm.linksLock.RUnlock()
 
-	data, err := json.MarshalIndent(shortLinks, "", "  ")
+	linksFile := filepath.Join(sm.dataDir, "shortlinks.json")
+	tempFile := linksFile + ".tmp"
+
+	data, err := json.MarshalIndent(sm.links, "", "  ")
 	if err != nil {
-		log.Printf("[Storage] ERROR marshaling links: %v", err)
-		return fmt.Errorf("failed to marshal links: %w", err)
+		return fmt.Errorf("序列化链接数据失败: %w", err)
 	}
 
-	// WriteFile handles file creation/truncation
-	if err := os.WriteFile(linksFile, data, 0640); err != nil { // Use more restrictive permissions
-		log.Printf("[Storage] ERROR writing links file '%s': %v", linksFile, err)
-		return fmt.Errorf("failed to write links file: %w", err)
+	// 先写入临时文件
+	if err := os.WriteFile(tempFile, data, 0640); err != nil {
+		return fmt.Errorf("写入临时文件失败: %w", err)
 	}
-	// log.Printf("[Storage] Successfully saved links to file.") // Reduce log verbosity
+
+	// 重命名临时文件为正式文件
+	if err := os.Rename(tempFile, linksFile); err != nil {
+		// 清理临时文件
+		os.Remove(tempFile)
+		return fmt.Errorf("重命名临时文件失败: %w", err)
+	}
+
 	return nil
 }
 
-// Removed CheckStoragePermissions function as InitStorage handles directory creation.
+// StoreShortLink 存储短链接映射
+func (sm *StorageManager) StoreShortLink(shortCode, longURL string) error {
+	sm.linksLock.Lock()
+	sm.links[shortCode] = longURL
+	sm.linksLock.Unlock()
+
+	return sm.SaveLinks()
+}
+
+// GetLongURL 获取短链接对应的原始URL
+func (sm *StorageManager) GetLongURL(shortCode string) (string, bool) {
+	sm.linksLock.RLock()
+	longURL, exists := sm.links[shortCode]
+	sm.linksLock.RUnlock()
+	return longURL, exists
+}
+
+// DeleteShortLink 删除短链接
+func (sm *StorageManager) DeleteShortLink(shortCode string) error {
+	sm.linksLock.Lock()
+	delete(sm.links, shortCode)
+	sm.linksLock.Unlock()
+
+	return sm.SaveLinks()
+}
+
+// GetConfig 获取存储管理器的配置
+func (sm *StorageManager) GetConfig() *Config {
+	return sm.config
+}
+
+// SetShortLink 设置短链接到存储系统中
+func SetShortLink(shortCode, longURL string) error {
+	manager := GetStorageManager()
+	if manager == nil {
+		return fmt.Errorf("存储管理器未初始化")
+	}
+	return manager.StoreShortLink(shortCode, longURL)
+}
+
+// GetShortLink 从存储系统中获取短链接对应的原始URL
+func GetShortLink(shortCode string) (string, bool) {
+	manager := GetStorageManager()
+	if manager == nil {
+		return "", false
+	}
+	return manager.GetLongURL(shortCode)
+}
+
+// StoreMetadata 存储元数据，包括可选的密码保护
+func StoreMetadata(metadata *StoredMetadata) error {
+	manager := GetStorageManager()
+	if manager == nil {
+		return fmt.Errorf("存储管理器未初始化")
+	}
+
+	dataDir := filepath.Join(manager.dataDir, "data")
+	if err := os.MkdirAll(dataDir, 0750); err != nil {
+		return fmt.Errorf("创建数据目录失败: %w", err)
+	}
+
+	filePath := filepath.Join(dataDir, metadata.ID+".json")
+	jsonData, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化元数据失败: %w", err)
+	}
+
+	if err := os.WriteFile(filePath, jsonData, 0640); err != nil {
+		return fmt.Errorf("写入元数据文件失败: %w", err)
+	}
+
+	return nil
+}
+
+// GetMetadata 获取元数据，包括密码保护信息
+func GetMetadata(id string) (*StoredMetadata, error) {
+	manager := GetStorageManager()
+	if manager == nil {
+		return nil, fmt.Errorf("存储管理器未初始化")
+	}
+
+	filePath := filepath.Join(manager.dataDir, "data", id+".json")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("元数据不存在")
+		}
+		return nil, fmt.Errorf("读取元数据文件失败: %w", err)
+	}
+
+	var metadata StoredMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("解析元数据失败: %w", err)
+	}
+
+	return &metadata, nil
+}

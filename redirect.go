@@ -7,26 +7,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// redirect handles redirecting a short code to its original long URL.
-func redirect(config *Config) gin.HandlerFunc { // Accept config
-	return func(c *gin.Context) { // Return the actual handler
+func redirect(config *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		shortCode := c.Param("shortCode")
-		log.Printf("Attempting to redirect short code: %s", shortCode)
+		if shortCode == "" {
+			log.Printf("[Redirect] 短代码为空")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的短链接"})
+			return
+		}
 
-		url, accessed, exists := GetShortLink(config, shortCode) // Pass config
+		url, exists := GetShortLink(shortCode)
 		if !exists {
-			log.Printf("Short link not found: %s", shortCode)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Short link not found"})
+			log.Printf("[Redirect] 未找到短链接: %s", shortCode)
+			c.JSON(http.StatusNotFound, gin.H{"error": "短链接不存在或已过期"})
 			return
 		}
 
-		if accessed {
-			log.Printf("Short link already accessed: %s", shortCode)
-			c.JSON(http.StatusGone, gin.H{"error": "This message has been burned!"})
-			return
-		}
-
-		log.Printf("Redirecting %s to %s", shortCode, url)
-		c.Redirect(http.StatusFound, url)
-	} // Close returned handler
+		log.Printf("[Redirect] 重定向 %s 到 %s", shortCode, url)
+		c.Redirect(http.StatusMovedPermanently, url)
+	}
 }

@@ -17,21 +17,42 @@ import (
 	"github.com/google/uuid"
 )
 
-// Removed const dataStorageDir and finalUploadDir, will use config values from *Config.
+type Server struct {
+	config *Config
+}
+
+type PasswordProtection struct {
+	Data string `json:"data"`
+	IV   string `json:"iv"`
+	Salt string `json:"salt"`
+}
+
 // StoredData 定义旧的存储在文件中的数据结构 (主要用于文本模式)
 type StoredData struct {
-	EncryptedData    string `json:"encryptedData"`    // Base64 encoded (Only for text mode now)
-	IV               string `json:"iv"`               // Base64 encoded
-	Salt             string `json:"salt"`             // Base64 encoded
-	OriginalFilename string `json:"originalFilename"` // Should be empty for text mode
+	EncryptedData      string              `json:"encryptedData"`    // Base64 encoded (Only for text mode now)
+	IV                 string              `json:"iv"`               // Base64 encoded
+	Salt               string              `json:"salt"`             // Base64 encoded
+	OriginalFilename   string              `json:"originalFilename"` // Should be empty for text mode
+	PasswordProtection *PasswordProtection `json:"passwordProtection,omitempty"`
 }
 
 // StoredMetadata 定义仅包含元数据的文件结构 (用于文件分片上传后)
+// Added PasswordProtection field to handle password-protected files correctly.
 type StoredMetadata struct {
-	ID               string `json:"id"`               // Corresponds to uploadId
-	IV               string `json:"iv"`               // Base64 encoded
-	Salt             string `json:"salt"`             // Base64 encoded
-	OriginalFilename string `json:"originalFilename"` // Original filename from upload
+	ID                 string              `json:"id"`
+	IV                 string              `json:"iv"`
+	Salt               string              `json:"salt"`
+	OriginalFilename   string              `json:"originalFilename"`
+	PasswordProtection *PasswordProtection `json:"passwordProtection,omitempty"` // Added this field
+}
+
+// StoreRequest 扩展请求结构以支持密码保护
+type StoreRequest struct {
+	EncryptedData      string              `json:"encryptedData"`
+	IV                 string              `json:"iv"`
+	Salt               string              `json:"salt"`
+	OriginalFilename   string              `json:"originalFilename,omitempty"`
+	PasswordProtection *PasswordProtection `json:"passwordProtection,omitempty"`
 }
 
 // Removed local isValidUUID function, will use IsValidUUID from utils.go
@@ -41,169 +62,175 @@ type StoredMetadata struct {
 // StoreDataHandler handles storing encrypted data sent from the client
 // StoreDataHandler handles storing encrypted TEXT data sent from the client (legacy/text mode)
 // StoreDataHandler handles storing encrypted TEXT data sent from the client (legacy/text mode)
-func StoreDataHandler(config *Config) gin.HandlerFunc { // Accept config
-	return func(c *gin.Context) { // Return the actual handler
-		var requestData StoredData
-		if err := c.ShouldBindJSON(&requestData); err != nil {
-			log.Printf("[StoreData] Error binding JSON: %v", err)                                           // Add context
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format", "details": err.Error()}) // Slightly clearer message
+func StoreDataHandler(config *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var request StoreRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			log.Printf("[StoreData] Error binding JSON: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求格式", "details": err.Error()})
 			return
 		}
 
-		// Basic validation
-		if requestData.EncryptedData == "" || requestData.IV == "" || requestData.Salt == "" {
-			log.Println("[StoreData] Missing required fields (encryptedData, iv, salt)")                                                // Add context
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required fields", "fields": []string{"encryptedData", "iv", "salt"}}) // More structured error
+		// 改进的数据验证
+		if len(request.EncryptedData) == 0 {
+			log.Println("[StoreData] Missing encryptedData")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少加密数据"})
 			return
 		}
 
-		// Log original filename if provided (useful for files)
-		// OriginalFilename should not be present in text mode
-		if requestData.OriginalFilename != "" {
-			log.Printf("Warning: StoreDataHandler received OriginalFilename for text data? Filename: %s", requestData.OriginalFilename)
-			// Decide if this is an error or just ignore it. Ignoring for now.
-			requestData.OriginalFilename = "" // Ensure it's not saved for text
+		if len(request.IV) == 0 {
+			log.Println("[StoreData] Missing IV")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少IV"})
+			return
+		}
+
+		if len(request.Salt) == 0 {
+			log.Println("[StoreData] Missing salt")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少salt"})
+			return
 		}
 
 		// Generate unique ID
 		id := uuid.New().String()
 		fileName := id + ".json"
-		filePath := filepath.Join(config.Paths.DataStorageDir, fileName) // Use config path
+		filePath := filepath.Join(config.Paths.DataStorageDir, fileName)
 
-		// log.Printf("Attempting to store data with ID: %s to %s", id, filePath) // Reduce verbose logging
+		// 构建存储数据结构
+		data := StoredData{
+			EncryptedData:      request.EncryptedData,
+			IV:                 request.IV,
+			Salt:               request.Salt,
+			PasswordProtection: request.PasswordProtection,
+		}
 
-		// Marshal the received data (including optional filename) to JSON
-		jsonData, err := json.MarshalIndent(requestData, "", "  ")
+		// 确保目录存在
+		if err := os.MkdirAll(config.Paths.DataStorageDir, 0750); err != nil {
+			log.Printf("[StoreData:%s] Error creating directory %s: %v", id, config.Paths.DataStorageDir, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法创建存储目录"})
+			return
+		}
+
+		// 序列化数据
+		jsonData, err := json.MarshalIndent(data, "", "  ")
 		if err != nil {
-			log.Printf("[StoreData:%s] Error marshaling data: %v", id, err)                                // Add context and ID
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error preparing data"}) // More generic internal error
+			log.Printf("[StoreData:%s] Error marshaling JSON: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法序列化数据"})
 			return
 		}
 
-		// Ensure the directory exists (although called in main, belt-and-suspenders)
-		// Re-checking permissions/existence might be needed in a concurrent env
-		if err := os.MkdirAll(config.Paths.DataStorageDir, 0750); err != nil { // Use config path
-			log.Printf("[StoreData:%s] Error ensuring data storage directory '%s': %v", id, config.Paths.DataStorageDir, err) // Add ID
-			// Don't necessarily fail here, WriteFile below might still work if dir exists
-			// but logging the error is important.
-		}
-
-		// Write the JSON data to the file
-		// Use os.WriteFile instead of ioutil.WriteFile
-		if err := os.WriteFile(filePath, jsonData, 0640); err != nil { // Use more restrictive permissions
-			log.Printf("[StoreData:%s] Error writing data file %s: %v", id, filePath, err)              // Add ID
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error saving data"}) // More generic internal error
+		// 写入文件
+		if err := os.WriteFile(filePath, jsonData, 0640); err != nil {
+			log.Printf("[StoreData:%s] Error writing file %s: %v", id, filePath, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法保存数据"})
 			return
 		}
 
-		log.Printf("[StoreData:%s] Successfully stored text data", id) // Add context and ID
+		log.Printf("[StoreData:%s] Successfully stored data", id)
 		c.JSON(http.StatusOK, gin.H{"id": id})
-	} // Close returned handler
+	}
 }
 
 // GetDataHandler handles retrieving stored METADATA (IV, Salt, OriginalFilename) by ID
-// It no longer returns the encrypted data itself.
-// GetDataHandler handles retrieving stored METADATA (IV, Salt, OriginalFilename) or TEXT data by ID
-func GetDataHandler(config *Config) gin.HandlerFunc { // Accept config
-	return func(c *gin.Context) { // Return the actual handler
+// OR retrieving TEXT data (IV, Salt, EncryptedData)
+func GetDataHandler(config *Config) gin.HandlerFunc {
+	// Revised GetDataHandler logic based on biu/ reference and password protection integration
+	return func(c *gin.Context) {
 		id := c.Param("id")
-		if id == "" {
-			log.Println("[GetData] Request missing ID parameter")                          // Add context
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Data ID parameter is required"}) // Clearer message
+		if !IsValidUUID(id) {
+			log.Printf("[GetData] 无效的ID格式: %s", id)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的数据ID"})
 			return
 		}
-		// --- Path Traversal Mitigation ---
-		// 1. Validate ID format
-		if !IsValidUUID(id) { // Use shared function
-			log.Printf("[GetData:%s] Invalid ID format received", id)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
-			return
-		}
-		// 2. Clean the ID part of the path (though UUID format should prevent '..')
-		cleanID := filepath.Clean(id)
-		if cleanID != id || strings.Contains(cleanID, "..") { // Double check after cleaning
-			log.Printf("[GetData:%s] Potential path traversal detected after cleaning ID ('%s' -> '%s')", id, id, cleanID)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
-			return
-		}
-		// --- End Mitigation ---
 
-		// Construct file path - IMPORTANT: Sanitize ID to prevent path traversal
-		// A simple check: ensure ID contains only expected characters (e.g., hex, dashes for UUID)
-		// For UUIDs, a regex like ^[a-fA-F0-9-]+$ is reasonable.
-		// For simplicity here, we assume UUID format is generated correctly.
-		fileName := id + ".json"
-		filePath := filepath.Join(config.Paths.DataStorageDir, fileName) // Use config path
+		log.Printf("[GetData] 尝试获取数据，ID: %s", id)
+		dataPath := filepath.Join(config.Paths.DataStorageDir, id+".json")
 
-		// log.Printf("Attempting to retrieve metadata for ID: %s from %s", id, filePath) // Reduce verbose logging
-
-		// Read the JSON file content
-		// Use os.ReadFile instead of ioutil.ReadFile
-		jsonData, err := os.ReadFile(filePath)
+		log.Printf("[GetData] 尝试读取文件: %s", dataPath)
+		jsonData, err := os.ReadFile(dataPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				log.Printf("[GetData:%s] Metadata file not found: %s", id, filePath) // Add context and ID
-				// Return 404, client JS handles the 'burned' message logic
-				c.JSON(http.StatusNotFound, gin.H{"error": "Metadata not found or already burned"})
+				log.Printf("[GetData] 数据文件不存在: %s", dataPath)
+				c.JSON(http.StatusNotFound, gin.H{"error": "数据不存在或已被销毁"})
+				return
+			}
+			log.Printf("[GetData] 读取数据文件失败: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取数据失败"})
+			return
+		}
+
+		// log.Printf("[GetData:%s] Raw JSON data read from file: %s", id, string(jsonData))
+
+		// Attempt 1: Parse as StoredData (handles text, potentially password-protected)
+		var textData StoredData
+		errText := json.Unmarshal(jsonData, &textData)
+
+		if errText == nil {
+			// Successfully parsed as StoredData, now check specifics
+			if textData.PasswordProtection != nil {
+				// Password protected data (could be text or file, parsed as StoredData)
+				log.Printf("[GetData:%s] 检测到密码保护的数据 (解析为 StoredData)", id)
+				response := gin.H{
+					"needPassword":       true,
+					"iv":                 textData.IV,
+					"salt":               textData.Salt,
+					"passwordProtection": textData.PasswordProtection,
+				}
+				if textData.OriginalFilename != "" {
+					response["originalFilename"] = textData.OriginalFilename
+				}
+				if textData.EncryptedData != "" {
+					response["encryptedData"] = textData.EncryptedData
+				}
+				c.JSON(http.StatusOK, response)
+				return
+			} else if textData.EncryptedData != "" && textData.OriginalFilename == "" {
+				// Non-password-protected text data
+				log.Printf("[GetData:%s] 返回文本数据 (无密码)", id)
+				c.JSON(http.StatusOK, gin.H{
+					"iv":            textData.IV,
+					"salt":          textData.Salt,
+					"encryptedData": textData.EncryptedData,
+				})
+				return
+			}
+			// If it parsed as StoredData but doesn't fit above criteria,
+			// it might be file metadata that partially matched. Proceed to Attempt 2.
+			log.Printf("[GetData:%s] Parsed as StoredData but not valid text/password format. Trying StoredMetadata.", id)
+		}
+
+		// Attempt 2: Parse as StoredMetadata (handles files, potentially password-protected)
+		var fileMeta StoredMetadata
+		errFile := json.Unmarshal(jsonData, &fileMeta)
+
+		if errFile == nil && fileMeta.OriginalFilename != "" {
+			// Successfully parsed as StoredMetadata and has an original filename
+			if fileMeta.PasswordProtection != nil {
+				// Password-protected file metadata
+				log.Printf("[GetData:%s] 检测到密码保护的文件元数据", id)
+				c.JSON(http.StatusOK, gin.H{
+					"needPassword":       true,
+					"iv":                 fileMeta.IV,
+					"salt":               fileMeta.Salt,
+					"passwordProtection": fileMeta.PasswordProtection,
+					"originalFilename":   fileMeta.OriginalFilename,
+				})
+				return
 			} else {
-				log.Printf("[GetData:%s] Error reading metadata file %s: %v", id, filePath, err)                 // Add context and ID
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error reading metadata"}) // More generic internal error
+				// Non-password-protected file metadata
+				log.Printf("[GetData:%s] 返回文件元数据 (无密码)", id)
+				c.JSON(http.StatusOK, gin.H{
+					"iv":               fileMeta.IV,
+					"salt":             fileMeta.Salt,
+					"originalFilename": fileMeta.OriginalFilename,
+				})
+				return
 			}
-			return
 		}
 
-		// Log the raw data being processed
-		log.Printf("[GetData:%s] Raw JSON data read from file: %s", id, string(jsonData))
-
-		// Try unmarshaling as StoredData (text format) first
-		var oldData StoredData
-		errOld := json.Unmarshal(jsonData, &oldData)
-
-		// Check if it parsed successfully AND contains the EncryptedData field (distinguishes text)
-		if errOld == nil && oldData.EncryptedData != "" {
-			log.Printf("[GetData:%s] Retrieved text data (legacy format)", id) // Add context and ID
-			c.JSON(http.StatusOK, oldData)                                     // Return the object containing encryptedData, iv, salt
-			return
-		}
-
-		// If it wasn't valid text data, try unmarshaling as StoredMetadata (file format)
-		var metadata StoredMetadata
-		errMeta := json.Unmarshal(jsonData, &metadata)
-		log.Printf("[GetData:%s] Attempted parsing as StoredMetadata, error: %v", id, errMeta) // Log metadata parse attempt error
-
-		// Check if it parsed successfully AND contains the OriginalFilename (distinguishes file metadata)
-		if errMeta == nil && metadata.OriginalFilename != "" {
-			log.Printf("[GetData:%s] Retrieved file metadata", id) // Add context and ID
-			// Ensure the ID in the metadata matches the request ID (optional sanity check)
-			if metadata.ID == "" { // If ID wasn't in the stored JSON, use the request ID
-				metadata.ID = id
-			} else if metadata.ID != id {
-				log.Printf("[GetData:%s] Warning: Metadata ID mismatch (Metadata has ID: %s)", id, metadata.ID) // Add context and ID
-				// Decide how to handle: error out, or trust request ID? Trusting request ID for now.
-				metadata.ID = id
-			}
-			// Successfully parsed as file metadata, return it.
-			c.JSON(http.StatusOK, metadata) // Return StoredMetadata struct
-			return                          // IMPORTANT: Return after successful handling
-		}
-
-		// If neither format matched or key fields were missing, log errors and return failure
-		log.Printf("[GetData:%s] Error determining data type. RawData='%s', ParseAsTextErr=%v, ParseAsMetaErr=%v", id, string(jsonData), errOld, errMeta) // Log raw data on final failure
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error: Invalid stored data format"})                                       // Keep user-facing error generic but specific
-
-		// Ensure the ID in the metadata matches the request ID (optional sanity check)
-		if metadata.ID == "" { // If ID wasn't in the stored JSON, use the request ID
-			metadata.ID = id
-		} else if metadata.ID != id {
-			// This block seems redundant after the previous metadata.ID check, consider removing or refactoring.
-			// Keeping it for now, but adding context/ID to log.
-			log.Printf("[GetData:%s] Warning: Metadata ID mismatch (after parsing attempts, Metadata has ID: %s)", id, metadata.ID)
-			// Decide how to handle: error out, or trust request ID? Trusting request ID for now.
-			metadata.ID = id
-		}
-
-		// Code should not reach here due to returns in the blocks above
-	} // Close returned handler
+		// Failure: Neither format matched correctly
+		log.Printf("[GetData:%s] 无法确定数据类型或格式无效. RawData='%s', ParseTextErr=%v, ParseFileErr=%v", id, string(jsonData), errText, errFile)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "存储的数据格式无效"})
+	}
 }
 
 // BurnDataHandler handles deleting stored metadata AND the corresponding merged file (if applicable)
@@ -487,5 +514,7 @@ func DownloadHandler(config *Config) gin.HandlerFunc { // Accept config
 		// Gin handles logging errors during file serving internally to some extent.
 	} // Close returned handler
 }
+
+// Removed redundant handleGetData function
 
 // End of file

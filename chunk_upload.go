@@ -36,10 +36,15 @@ type ChunkResponse struct {
 	Completed bool   `json:"completed,omitempty"`
 }
 
-// Removed const tempDir and uploadDir, paths are retrieved from *Config.
-
-// 使用互斥锁保护文件合并过程
+// mergeMutex 用于保护文件合并过程的互斥锁
+// 确保同一时间只有一个合并操作在进行，防止并发问题
 var mergeMutex sync.Mutex
+
+// 初始化随机数生成器
+func init() {
+	// 使用当前时间作为种子初始化 math/rand
+	mathRand.Seed(time.Now().UnixNano())
+}
 
 // ChunkUploadHandler 处理分片上传请求 (Exported)
 // ChunkUploadHandler handles receiving individual file chunks.
@@ -121,6 +126,7 @@ func ChunkUploadHandler(config *Config) gin.HandlerFunc { // Accept config
 			return
 		}
 
+		// 使用加密后的文件大小而不是原始文件大小
 		fileSize, err := strconv.ParseInt(fileSizeStr, 10, 64)
 		if err != nil {
 			log.Printf("[ChunkUpload:%s] Invalid file size format: %s, error: %v", uploadID, fileSizeStr, err)
@@ -136,6 +142,13 @@ func ChunkUploadHandler(config *Config) gin.HandlerFunc { // Accept config
 			return
 		}
 		defer file.Close()
+
+		// 检查分片大小是否在合理范围内
+		if header.Size > int64(config.Server.MaxFileSizeMB)*1024*1024 {
+			log.Printf("[ChunkUpload:%s] Chunk size exceeds limit: %d bytes", uploadID, header.Size)
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Chunk size exceeds server limit"})
+			return
+		}
 
 		// 在 header 有效的作用域内记录日志
 		log.Printf("[ChunkUpload:%s] Received chunk %d / %d: Name=%s, Size=%d bytes", uploadID, chunkNumber, totalChunks, header.Filename, header.Size) // Add filename
@@ -324,11 +337,29 @@ func CheckUploadStatusHandler(config *Config) gin.HandlerFunc { // Accept config
 }
 
 // InitUploadHandler initializes the chunk upload process and returns an upload ID.
-func InitUploadHandler(config *Config) gin.HandlerFunc { // Accept config (for consistency, though not used here)
-	return func(c *gin.Context) { // Return the actual handler
-		// Gin 会自动处理 Method Not Allowed
+func InitUploadHandler(config *Config) gin.HandlerFunc {
+	// 用于追踪活跃上传的映射
+	var (
+		activeUploads = make(map[string]time.Time)
+		uploadsMutex  sync.Mutex
+	)
 
-		// 解析请求体
+	// 清理过期的上传记录
+	go func() {
+		for {
+			time.Sleep(time.Hour)
+			uploadsMutex.Lock()
+			now := time.Now()
+			for id, t := range activeUploads {
+				if now.Sub(t) > 24*time.Hour {
+					delete(activeUploads, id)
+				}
+			}
+			uploadsMutex.Unlock()
+		}
+	}()
+
+	return func(c *gin.Context) {
 		var uploadRequest struct {
 			FileName string `json:"fileName"`
 			FileSize int64  `json:"fileSize"`
@@ -336,7 +367,7 @@ func InitUploadHandler(config *Config) gin.HandlerFunc { // Accept config (for c
 
 		if err := c.ShouldBindJSON(&uploadRequest); err != nil {
 			log.Printf("[InitUpload] Error binding JSON: %v", err)
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid request format", "details": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid request format"})
 			return
 		}
 
@@ -348,15 +379,24 @@ func InitUploadHandler(config *Config) gin.HandlerFunc { // Accept config (for c
 
 		// 生成上传ID
 		uploadID := generateUploadID(uploadRequest.FileName)
+
+		// 检查并记录上传ID
+		uploadsMutex.Lock()
+		if _, exists := activeUploads[uploadID]; exists {
+			// 如果上传ID已存在，生成一个新的
+			uploadID = generateUploadID(uploadRequest.FileName + time.Now().String())
+		}
+		activeUploads[uploadID] = time.Now()
+		uploadsMutex.Unlock()
+
 		log.Printf("[InitUpload] Initialized upload for file '%s' with ID: %s", uploadRequest.FileName, uploadID)
 
-		// 返回上传ID
-		c.JSON(http.StatusOK, ChunkResponse{ // 使用 c.JSON
+		c.JSON(http.StatusOK, ChunkResponse{
 			Success:  true,
 			Message:  "Upload initialized",
 			UploadID: uploadID,
 		})
-	} // Close returned handler
+	}
 }
 
 // mergeChunks 合并所有分片成一个完整文件
@@ -365,19 +405,16 @@ func InitUploadHandler(config *Config) gin.HandlerFunc { // Accept config (for c
 func MergeChunks(config *Config, uploadID, fileName string, totalChunks int, expectedSize int64, chunkDir string) { // Accept config
 	startTime := time.Now() // 记录开始时间
 	log.Printf("[%s] MergeChunks: Started. totalChunks = %d, expectedSize = %d, chunkDir = %s", uploadID, totalChunks, expectedSize, chunkDir)
-	// Defer the finish log and mutex unlock
+	// 获取互斥锁
+	mergeMutex.Lock()
+	// 立即设置互斥锁的解锁
+	defer mergeMutex.Unlock()
+
+	// 设置其他清理工作的延迟函数
 	defer func() {
 		duration := time.Since(startTime)
 		log.Printf("[%s] MergeChunks: Finished. Duration: %s", uploadID, duration)
-		// Ensure mutex is unlocked even if function returns early (e.g., due to panic or early return)
-		mergeMutex.Unlock()
 	}()
-	// Lock the mutex *before* the defer unlock is set up
-	mergeMutex.Lock()
-	// Defer the unlock *after* successfully acquiring the lock
-	defer mergeMutex.Unlock()
-
-	// 注意：上面 defer 中已添加启动日志，此处移除重复日志
 
 	// 创建最终文件所在的目录 uploadDir/uploadID
 	finalDir := filepath.Join(config.Paths.FinalUploadDir, uploadID)                        // Use config path
@@ -519,27 +556,28 @@ func cryptoRandBytes(n int) []byte {
 	b := make([]byte, n)
 	_, err := io.ReadFull(cryptoRand.Reader, b)
 	if err != nil {
-		// Fallback to less secure random on error (should not happen in practice)
-		log.Printf("WARNING: crypto/rand failed: %v. Falling back to math/rand.", err)
-		return mathRandBytes(n)
+		// 在密码学安全随机数生成失败时，记录错误并使用更安全的备选方案
+		log.Printf("CRITICAL: crypto/rand failed: %v - using time-based fallback", err)
+		// 使用多个时间源和进程信息来增加熵
+		fallbackSource := []byte(fmt.Sprintf("%d-%d-%d",
+			time.Now().UnixNano(),
+			os.Getpid(),
+			mathRand.Int63()))
+		hash := md5.Sum(fallbackSource)
+		copy(b, hash[:])
+		return b
 	}
 	return b
 }
 
 // mathRandBytes generates pseudo-random bytes (fallback).
+// 这个函数仅作为最后的备选方案，不应该在正常情况下被使用
 func mathRandBytes(n int) []byte {
 	b := make([]byte, n)
-	// Seed math/rand if not already done (e.g., in main or init)
-	// mathRand.Seed(time.Now().UnixNano()) // Be careful with concurrent seeding
 	for i := range b {
 		b[i] = byte(mathRand.Intn(256))
 	}
 	return b
-}
-
-// getTimestamp 获取当前时间戳
-func getTimestamp() int64 {
-	return time.Now().UnixNano() // 使用纳秒时间戳增加唯一性
 }
 
 // EnsureDirectoriesExist 确保必要的目录存在 (Exported)

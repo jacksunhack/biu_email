@@ -25,3 +25,86 @@ label { display: block; margin-bottom: 5px; font-weight: 500; color: #495057;}
 footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6; font-size: 0.9em; color: #6c757d; }
 footer a { color: #007bff; text-decoration: none; }
 footer a:hover { text-decoration: underline; }
+
+.password-protection {
+    margin: 15px 0;
+    padding: 15px;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    background-color: #f8f9fa;
+}
+
+.password-protection label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    cursor: pointer;
+}
+
+.password-protection input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+#passwordInputGroup {
+    margin-top: 10px;
+    max-width: 100%;
+}
+
+#accessPassword, #contentPassword {
+    width: 100%;
+    max-width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+.password-prompt {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 20px;
+    text-align: center;
+    margin: 20px auto;
+    max-width: 400px;
+}
+
+.password-prompt h3 {
+    margin-bottom: 15px;
+    color: #333;
+    font-size: 18px;
+}
+
+.password-prompt .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+}
+
+.password-prompt input[type="password"] {
+    width: 100%;
+    max-width: 300px;
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    margin: 0 auto;
+}
+
+.password-prompt button {
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    margin-top: 10px;
+}
+
+.password-prompt button:hover {
+    background-color: #0056b3;
+}

@@ -1,49 +1,56 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/hex"
-	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
-	"time"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
-// generateShortLink handles creating a short link for a given long URL.
-func generateShortLink(config *Config) gin.HandlerFunc { // Accept config
-	return func(c *gin.Context) { // Return the actual handler
-		longUrl := c.PostForm("longUrl")
-		if longUrl == "" {
-			log.Println("Long URL not provided")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Long URL not provided"})
+const (
+	shortCodeLength = 6
+	shortCodeChars  = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+)
+
+func generateShortLink(config *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var request struct {
+			URL string `json:"url" binding:"required"`
+		}
+
+		if err := c.ShouldBindJSON(&request); err != nil {
+			log.Printf("[ShortLink] JSON绑定失败: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求格式"})
 			return
 		}
 
-		log.Printf("Received long URL: %s", longUrl)
+		shortCode := generateUniqueShortCode()
+		longUrl := strings.TrimSpace(request.URL)
 
-		shortCode := generateShortCode()
-		log.Printf("Generated short code: %s", shortCode)
-
-		log.Printf("Storing short link: %s -> %s", shortCode, longUrl)
-		err := SetShortLink(config, shortCode, longUrl) // Pass config
+		err := SetShortLink(shortCode, longUrl)
 		if err != nil {
-			log.Printf("[ShortLink] Error saving short link %s -> %s: %v", shortCode, longUrl, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save short link data"})
+			log.Printf("[ShortLink] 保存短链接失败: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存短链接失败"})
 			return
 		}
-		log.Printf("Successfully stored short link in memory")
 
-		shortUrl := fmt.Sprintf("http://%s/s/%s", c.Request.Host, shortCode)
-		log.Printf("Generated short URL: %s", shortUrl)
-
-		c.JSON(http.StatusOK, gin.H{"shortUrl": shortUrl})
-	} // Close returned handler
+		c.JSON(http.StatusOK, gin.H{
+			"shortCode": shortCode,
+			"shortUrl":  "/s/" + shortCode,
+		})
+	}
 }
 
-func generateShortCode() string {
-	timestamp := time.Now().UnixNano()
-	hash := md5.Sum([]byte(fmt.Sprintf("%d", timestamp)))
-	return hex.EncodeToString(hash[:])[:6]
+func generateUniqueShortCode() string {
+	chars := []rune(shortCodeChars)
+	length := len(chars)
+	result := make([]rune, shortCodeLength)
+
+	for i := range result {
+		result[i] = chars[rand.Intn(length)]
+	}
+
+	return string(result)
 }

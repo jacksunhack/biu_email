@@ -2,7 +2,9 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Biu~ 阅后即焚 - 安全加密的文件和消息分享工具">
+    <meta name="theme-color" content="#007bff">
     <title>Biu~ 阅后即焚 (客户端加密版)</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -30,6 +32,16 @@
                     <small id="fileSizeWarning" class="hidden" style="color: red;">文件大小超过限制！</small>
                 </div>
             </div>
+
+            <div id="password-section" class="form-group password-protection">
+                <label>
+                    <input type="checkbox" id="enablePassword"> 启用访问密码保护
+                </label>
+                <div id="passwordInputGroup" style="display: none;">
+                    <input type="password" id="accessPassword" placeholder="设置访问密码（至少6个字符）" class="form-control">
+                </div>
+            </div>
+
             <div class="button-container">
                 <button type="submit" id="submitBtn">加密并生成链接</button>
                 <div id="loader" class="loader hidden"></div>
@@ -42,6 +54,7 @@
             <p>成功！你的阅后即焚链接：</p>
             <a id="link" href="#" target="_blank"></a>
             <p><small>请注意：此链接仅能访问一次，密钥存储在 # 之后的部分，不会发送到服务器。</small></p>
+            <p><small id="passwordNote" class="hidden">此链接已启用密码保护，请记住访问密码。</small></p>
         </div>
 
         <div id="content-area" class="hidden">
