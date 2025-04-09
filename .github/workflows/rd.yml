@@ -14,7 +14,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   # !!! IMPORTANT: Change 'myapp' to your actual application name !!!
-  APP_NAME: 'myapp'
+  APP_NAME: 'biu_email'
 
 jobs:
   build-test-publish-release:
@@ -40,14 +40,20 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22' # Ensure this matches or is compatible with go.mod
-          # Enable caching based on go.sum - helps resolve potential cache corruption
+          go-version-file: 'go.mod' # 使用go.mod中的版本
           cache: true
-          cache-dependency-path: go.sum # <<< Ensures cache key is based on dependencies
 
-      # 3. Run Go Tests
-      - name: Test Go Application
-        run: go test -v ./...
+      # 添加依赖安装步骤
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      # 修改构建测试步骤
+      - name: Build and Test
+        run: |
+          go build -v ./...
+          go test -v ./...
 
       # --- Release Asset Preparation (Only run on tag push) ---
 
