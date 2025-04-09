@@ -33,7 +33,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5 # Use latest major version
         with:
-          go-version: '1.22' # Make sure this matches or is compatible with go.mod
+          go-version: '1.24.1' # Make sure this matches or is compatible with go.mod
 
       # 3. Run Go Tests (includes checking build process)
       - name: Test Go Application
