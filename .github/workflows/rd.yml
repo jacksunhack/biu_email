@@ -13,39 +13,47 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  # Define the application name used for the binary output
-  APP_NAME: myapp # <<< CHANGE THIS to your actual application name
+  # !!! IMPORTANT: Change 'myapp' to your actual application name !!!
+  APP_NAME: 'myapp'
 
 jobs:
-  build-test-publish-release: # Renamed job for clarity
+  build-test-publish-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # Needed to checkout code and create/upload releases
-      packages: write      # Needed to push Docker images to GHCR
-      id-token: write    # Needed for OIDC token authentication for Cosign/Sigstore
+      # Needed to checkout code (read) and create/upload releases (write)
+      contents: write
+      # Needed to push Docker images to GHCR
+      packages: write
+      # Needed for OIDC token authentication for Cosign/Sigstore
+      id-token: write
 
     steps:
-      # 1. Checkout Code
+      # 1. Checkout Code - CRITICAL: Fetch full history for git archive
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 2. Set up Go environment
-      - name: Set up Go
-        uses: actions/setup-go@v5 # Use latest major version
         with:
-          go-version: '1.24.1' # Make sure this matches or is compatible with go.mod
-          cache: false
+          # Fetch all history for all tags and branches.
+          # Required for 'git archive <tag>' to work correctly.
+          fetch-depth: 0
 
-      # 3. Run Go Tests (includes checking build process)
+      # 2. Set up Go environment - With explicit cache dependency path
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22' # Ensure this matches or is compatible with go.mod
+          # Enable caching based on go.sum - helps resolve potential cache corruption
+          cache: true
+          cache-dependency-path: go.sum
+
+      # 3. Run Go Tests
       - name: Test Go Application
         run: go test -v ./...
 
-      # --- Release Steps (Only run on tag push) ---
+      # --- Release Asset Preparation (Only run on tag push) ---
 
       # 4. Build Go Binary for Linux Release
       #    Builds a static binary for linux/amd64 suitable for release.
       - name: Build Go Application for Linux Release
-        # Only run this step when a tag is pushed
         if: startsWith(github.ref, 'refs/tags/')
         id: build_release_binary
         run: |
@@ -55,57 +63,69 @@ jobs:
           # CGO_ENABLED=0 creates a static binary, GOOS/GOARCH specify the target
           # -ldflags="-s -w" strips debug info and symbols to reduce size
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o ${FILENAME} ./...
-          # Set outputs for later steps
           echo "ASSET_PATH=${FILENAME}" >> $GITHUB_OUTPUT
           echo "ASSET_NAME=${FILENAME}" >> $GITHUB_OUTPUT
 
-      # 5. Package Release Binary (Optional: Add README, LICENSE)
+      # 5. Create Source Code Archive
+      #    Archives the state of the repository at the specific tag.
+      - name: Create Source Code Archive
+        if: startsWith(github.ref, 'refs/tags/')
+        id: source_archive
+        run: |
+          TAG=${{ github.ref_name }}
+          ARCHIVE_BASENAME="source-code-${TAG}"
+          ARCHIVE_NAME="${ARCHIVE_BASENAME}.tar.gz"
+          # Use the specific tag for archiving, requires fetch-depth: 0 in checkout
+          git archive --format=tar.gz --prefix="${ARCHIVE_BASENAME}/" -o ${ARCHIVE_NAME} ${TAG}
+          echo "Created source archive: ${ARCHIVE_NAME}"
+          echo "ARCHIVE_PATH=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+          echo "ARCHIVE_FILENAME=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+
+      # 6. Package Release Binary (Optional: Add README, LICENSE)
       #    Creates a compressed archive (.tar.gz) of the binary.
       - name: Package Release Binary
         if: startsWith(github.ref, 'refs/tags/')
         id: package_release
         run: |
-          ASSET_NAME="${{ steps.build_release_binary.outputs.ASSET_NAME }}"
-          ARCHIVE_NAME="${ASSET_NAME}.tar.gz"
+          BINARY_NAME="${{ steps.build_release_binary.outputs.ASSET_NAME }}"
+          ARCHIVE_NAME="${BINARY_NAME}.tar.gz"
           # Create the archive containing the binary.
-          # You can add other files like README.md or LICENSE here if they exist in your repo root.
-          tar czvf ${ARCHIVE_NAME} ${ASSET_NAME} # Add README.md LICENSE etc. separated by spaces if needed
-          echo "Successfully created archive: ${ARCHIVE_NAME}"
-          # Set outputs for the upload step
+          # Add other files like README.md or LICENSE here if needed (ensure they exist)
+          # Example: tar czvf ${ARCHIVE_NAME} ${BINARY_NAME} README.md LICENSE
+          tar czvf ${ARCHIVE_NAME} ${BINARY_NAME}
+          echo "Successfully created binary package: ${ARCHIVE_NAME}"
           echo "ARCHIVE_PATH=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
           echo "ARCHIVE_FILENAME=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
 
-
-      # 6. Create GitHub Release and Upload Asset
-      #    Uses the tag to create a release and uploads the packaged binary.
-      - name: Create GitHub Release and Upload Asset
+      # 7. Create GitHub Release and Upload Assets
+      #    Uses the tag to create a release and uploads the binary and source archives.
+      - name: Create GitHub Release and Upload Assets
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2.0.6 # Use a specific stable version
-        # The GITHUB_TOKEN is automatically used by the action
+        uses: softprops/action-gh-release@v2.0.6
+        env:
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Provided automatically
         with:
-          # Use the tag name that triggered the workflow (e.g., v1.2.3)
           tag_name: ${{ github.ref_name }}
-          # Name of the release (e.g., Release v1.2.3)
           name: Release ${{ github.ref_name }}
-          # Body: You can customize this, e.g., add release notes automatically
-          # body: |
-          #   Automated release of ${{ env.APP_NAME }} version ${{ github.ref_name }}
-          #   Includes linux/amd64 binary.
-          # Set draft: true if you want to manually review before publishing
+          body: |
+            Automated release of ${{ env.APP_NAME }} version ${{ github.ref_name }}
+            Assets include:
+            - Linux/amd64 binary package
+            - Source code archive
           draft: false
-          # Set prerelease: true if the tag indicates a pre-release (e.g., v1.0.0-beta.1)
-          # You might want to add logic here based on the tag format if needed
           prerelease: contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha')
-          # List of files to upload to the release
-          files: ${{ steps.package_release.outputs.ARCHIVE_PATH }}
+          # Upload both the binary package and the source code archive
+          files: |
+            ${{ steps.package_release.outputs.ARCHIVE_PATH }}
+            ${{ steps.source_archive.outputs.ARCHIVE_PATH }}
 
       # --- Docker Steps (Run on main push/tags and PRs, but push only on main/tags) ---
 
-      # 7. Set up Docker Buildx
+      # 8. Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 8. Log in to the Container Registry (GHCR)
+      # 9. Log in to the Container Registry (GHCR)
       - name: Log into registry ${{ env.REGISTRY }}
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -114,46 +134,62 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 9. Extract Docker metadata (tags, labels)
+      # 10. Extract Docker metadata (tags, labels)
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Add tag mapping for version tags if needed explicitly
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # Add 'latest' tag only for default branch pushes (usually main)
+            type=raw,value=latest,enable={{is_default_branch}}
 
-      # 10. Build and push Docker image
+      # 11. Build and push Docker image
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v5
         with:
           context: .
+          # Optional: Specify Dockerfile if not named 'Dockerfile' in root
+          # file: ./path/to/your/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Optional: If your Dockerfile needs build args like the app version/tag:
+          # Optional: Pass build arguments like version to Dockerfile
           # build-args: |
           #   APP_VERSION=${{ github.ref_name }}
 
       # --- Signing Steps (Optional but Recommended, run only on push) ---
 
-      # 11. Install Cosign
+      # 12. Install Cosign
       - name: Install Cosign
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3.5.0
 
-      # 12. Sign the published Docker image
+      # 13. Sign the published Docker image
       - name: Sign the published Docker image
-        if: github.event_name != 'pull_request'
+        # Only sign if we pushed (not a PR) AND the push step output a digest
+        if: github.event_name != 'pull_request' && steps.build-and-push.outputs.digest != ''
         env:
+          # Needed for keyless signing
           COSIGN_EXPERIMENTAL: "true"
           TAGS: ${{ steps.meta.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: |
-          echo "Signing digest ${{ env.DIGEST }} with tags:"
+          echo "Signing digest ${{ env.DIGEST }} for tags:"
           echo "${TAGS}"
+          # Sign each comma-separated tag individually
           echo "${TAGS}" | sed 's/,/\n/g' | while read tag; do
-            echo "Signing ${tag}..."
-            cosign sign --yes "${tag}@${DIGEST}"
+            if [ -n "$tag" ]; then # Ensure tag is not empty
+              echo "Signing ${tag}..."
+              cosign sign --yes "${tag}@${DIGEST}"
+            fi
           done
