@@ -1,27 +1,26 @@
 # .github/workflows/ci-cd.yml
 
-name: Go Build, Test, Docker Build & Publish
+name: Go Build, Test, Docker Build & Publish, Release
 
 on:
   push:
     branches: [ "main" ]
-    # Publish semver tags as releases.
+    # Trigger on version tags like v1.0.0, v2.3.4-beta
     tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ "main" ]
 
 env:
-  # Use ghcr.io for GitHub Container Registry
   REGISTRY: ghcr.io
-  # Use the GitHub repository name as the image name
-  # Format: ghcr.io/<owner>/<repo>
   IMAGE_NAME: ${{ github.repository }}
+  # Define the application name used for the binary output
+  APP_NAME: myapp # <<< CHANGE THIS to your actual application name
 
 jobs:
-  build-and-publish:
+  build-test-publish-release: # Renamed job for clarity
     runs-on: ubuntu-latest
     permissions:
-      contents: read       # Needed to check out the repository
+      contents: write      # Needed to checkout code and create/upload releases
       packages: write      # Needed to push Docker images to GHCR
       id-token: write    # Needed for OIDC token authentication for Cosign/Sigstore
 
@@ -32,97 +31,124 @@ jobs:
 
       # 2. Set up Go environment
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5 # Use latest major version
         with:
-          go-version: '1.24.1' # Or your desired Go version
+          go-version: '1.22' # Make sure this matches or is compatible with go.mod
 
-      # 3. Build Go Application
-      #    (Assumes your Dockerfile might use the pre-built binary,
-      #     or you might adjust Dockerfile for multi-stage build)
-      - name: Build Go Application
-        run: go build -v -o myapp ./... # Build the application, output to 'myapp' (adjust name if needed)
-
-      # 4. Run Go Tests
+      # 3. Run Go Tests (includes checking build process)
       - name: Test Go Application
         run: go test -v ./...
 
-      # --- Docker Steps ---
+      # --- Release Steps (Only run on tag push) ---
 
-      # 5. Set up QEMU (Recommended for multi-platform builds, optional if only building for linux/amd64)
-      #    See: https://github.com/docker/setup-qemu-action
-      # - name: Set up QEMU
-      #   uses: docker/setup-qemu-action@v3
+      # 4. Build Go Binary for Linux Release
+      #    Builds a static binary for linux/amd64 suitable for release.
+      - name: Build Go Application for Linux Release
+        # Only run this step when a tag is pushed
+        if: startsWith(github.ref, 'refs/tags/')
+        id: build_release_binary
+        run: |
+          TAG=${{ github.ref_name }} # Gets the tag name (e.g., v1.0.0)
+          FILENAME="${{ env.APP_NAME }}-${TAG}-linux-amd64"
+          echo "Building release binary: ${FILENAME}"
+          # CGO_ENABLED=0 creates a static binary, GOOS/GOARCH specify the target
+          # -ldflags="-s -w" strips debug info and symbols to reduce size
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o ${FILENAME} ./...
+          # Set outputs for later steps
+          echo "ASSET_PATH=${FILENAME}" >> $GITHUB_OUTPUT
+          echo "ASSET_NAME=${FILENAME}" >> $GITHUB_OUTPUT
 
-      # 6. Set up Docker Buildx
-      #    Buildx is needed for advanced features like caching and multi-platform builds
+      # 5. Package Release Binary (Optional: Add README, LICENSE)
+      #    Creates a compressed archive (.tar.gz) of the binary.
+      - name: Package Release Binary
+        if: startsWith(github.ref, 'refs/tags/')
+        id: package_release
+        run: |
+          ASSET_NAME="${{ steps.build_release_binary.outputs.ASSET_NAME }}"
+          ARCHIVE_NAME="${ASSET_NAME}.tar.gz"
+          # Create the archive containing the binary.
+          # You can add other files like README.md or LICENSE here if they exist in your repo root.
+          tar czvf ${ARCHIVE_NAME} ${ASSET_NAME} # Add README.md LICENSE etc. separated by spaces if needed
+          echo "Successfully created archive: ${ARCHIVE_NAME}"
+          # Set outputs for the upload step
+          echo "ARCHIVE_PATH=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+          echo "ARCHIVE_FILENAME=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+
+
+      # 6. Create GitHub Release and Upload Asset
+      #    Uses the tag to create a release and uploads the packaged binary.
+      - name: Create GitHub Release and Upload Asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2.0.6 # Use a specific stable version
+        # The GITHUB_TOKEN is automatically used by the action
+        with:
+          # Use the tag name that triggered the workflow (e.g., v1.2.3)
+          tag_name: ${{ github.ref_name }}
+          # Name of the release (e.g., Release v1.2.3)
+          name: Release ${{ github.ref_name }}
+          # Body: You can customize this, e.g., add release notes automatically
+          # body: |
+          #   Automated release of ${{ env.APP_NAME }} version ${{ github.ref_name }}
+          #   Includes linux/amd64 binary.
+          # Set draft: true if you want to manually review before publishing
+          draft: false
+          # Set prerelease: true if the tag indicates a pre-release (e.g., v1.0.0-beta.1)
+          # You might want to add logic here based on the tag format if needed
+          prerelease: contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha')
+          # List of files to upload to the release
+          files: ${{ steps.package_release.outputs.ARCHIVE_PATH }}
+
+      # --- Docker Steps (Run on main push/tags and PRs, but push only on main/tags) ---
+
+      # 7. Set up Docker Buildx
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3 # Uses BuildKit engine
+        uses: docker/setup-buildx-action@v3
 
-      # 7. Log in to the Container Registry (GHCR)
-      #    Only log in when pushing (not on Pull Requests)
+      # 8. Log in to the Container Registry (GHCR)
       - name: Log into registry ${{ env.REGISTRY }}
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }} # Use the built-in GITHUB_TOKEN
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 8. Extract Docker metadata (tags, labels)
-      #    Generates tags like 'latest', git sha, and version tags automatically
+      # 9. Extract Docker metadata (tags, labels)
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5 # Automatically generates tags and labels
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # Example tags generated:
-          # type=schedule
-          # type=ref,event=branch
-          # type=ref,event=pr
-          # type=semver,pattern={{version}}
-          # type=semver,pattern={{major}}.{{minor}}
-          # type=semver,pattern={{major}}
-          # type=sha
 
-      # 9. Build and push Docker image
-      #    - Builds the image using Dockerfile in the context root.
-      #    - Pushes only if the event is NOT a pull_request.
-      #    - Uses tags and labels generated by the metadata action.
-      #    - Leverages GHA cache for faster subsequent builds.
+      # 10. Build and push Docker image
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v5
         with:
-          context: . # Build context is the root of the repository
-          file: ./Dockerfile # Explicitly state the Dockerfile path (optional if it's named 'Dockerfile' in root)
-          push: ${{ github.event_name != 'pull_request' }} # Only push on main branch pushes or tags
-          tags: ${{ steps.meta.outputs.tags }}             # Use tags from metadata step
-          labels: ${{ steps.meta.outputs.labels }}           # Use labels from metadata step
-          cache-from: type=gha                             # Use GitHub Actions cache as source
-          cache-to: type=gha,mode=max                      # Write to GitHub Actions cache (mode=max for potentially larger cache)
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Optional: If your Dockerfile needs build args like the app version/tag:
+          # build-args: |
+          #   APP_VERSION=${{ github.ref_name }}
 
-      # --- Signing Steps (Optional but Recommended) ---
+      # --- Signing Steps (Optional but Recommended, run only on push) ---
 
-      # 10. Install Cosign for signing the image
-      #     Only install if we are pushing the image
+      # 11. Install Cosign
       - name: Install Cosign
         if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@v3.5.0 # Use a specific version or latest
-        # uses: sigstore/cosign-installer@main # Or track main branch (less stable)
-        # with:
-        #   cosign-release: 'v2.2.4' # Optionally specify a version
+        uses: sigstore/cosign-installer@v3.5.0
 
-      # 11. Sign the published Docker image
-      #     Only sign if we pushed the image (not on Pull Requests)
-      #     Uses Sigstore's keyless signing with GitHub OIDC token
+      # 12. Sign the published Docker image
       - name: Sign the published Docker image
         if: github.event_name != 'pull_request'
         env:
-          # Pass the tags and digest output from the build-push step
-          COSIGN_EXPERIMENTAL: "true" # Required for keyless signing
+          COSIGN_EXPERIMENTAL: "true"
           TAGS: ${{ steps.meta.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
-        # Sign each tag with the digest
         run: |
           echo "Signing digest ${{ env.DIGEST }} with tags:"
           echo "${TAGS}"
