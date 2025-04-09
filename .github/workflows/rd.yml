@@ -1,217 +1,132 @@
-# .github/workflows/release.yml
-name: Release Go App, Binaries, and Docker Image
+# .github/workflows/ci-cd.yml
+
+name: Go Build, Test, Docker Build & Publish
 
 on:
   push:
-    tags:
-      - 'v*' # Trigger on version tags like v1.0.0
-  workflow_dispatch: # Allow manual triggering
+    branches: [ "main" ]
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ "main" ]
 
 env:
-  IMAGE_NAME: biu_email         # 应用/镜像基础名称
-  GO_VERSION: '1.21'            # 指定 Go 版本
-  GO_BINARY_NAME: biu_email      # Go 编译生成的二进制名称
+  # Use ghcr.io for GitHub Container Registry
+  REGISTRY: ghcr.io
+  # Use the GitHub repository name as the image name
+  # Format: ghcr.io/<owner>/<repo>
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-go:
-    name: Build Go Binaries
-    runs-on: ubuntu-latest
-    outputs:
-      # Output the artifact name for the release job
-      binary_artifact_name: go-binaries-${{ github.ref_name || format('manual-{0}', github.run_id) }}
-      # Output the base binary name for easier reference in release notes
-      binary_basename_linux_amd64: ${{ env.GO_BINARY_NAME }}-linux-amd64
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: '**/go.sum' # More specific path for cache trigger
-
-      # Go Cache is now handled by setup-go with cache-dependency-path
-
-      - name: Create bin directory
-        run: mkdir -p ./bin
-
-      - name: Build Go Binary for Linux (Static)
-        id: build_linux
-        run: |
-          BINARY_FILENAME="${{ env.GO_BINARY_NAME }}-linux-amd64"
-          echo "Building static binary for linux/amd64..."
-          # CGO_ENABLED=0 creates a static binary suitable for various Linux distros
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ./bin/${BINARY_FILENAME} .
-          echo "Build complete: ./bin/${BINARY_FILENAME}"
-          ls -lh ./bin
-          echo "binary_path=./bin/${BINARY_FILENAME}" >> $GITHUB_OUTPUT
-
-      - name: Upload Go Binaries Artifact
-        uses: actions/upload-artifact@v4 # Use v4
-        with:
-          name: go-binaries-${{ github.ref_name || format('manual-{0}', github.run_id) }}
-          path: ${{ steps.build_linux.outputs.binary_path }} # Upload only the built binary
-
-  build-and-push-docker:
-    name: Build and Push Docker Image
+  build-and-publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read      # Needed for checkout
-      packages: write     # Needed for GHCR push
-      id-token: write     # Optional: For keyless auth if you switch later
-    outputs:
-      # Pass image tags to the release job
-      docker_tags: ${{ steps.meta.outputs.tags }}
-      docker_digest: ${{ steps.build-push.outputs.digest }}
+      contents: read       # Needed to check out the repository
+      packages: write      # Needed to push Docker images to GHCR
+      id-token: write    # Needed for OIDC token authentication for Cosign/Sigstore
+
     steps:
-      - name: Checkout code
+      # 1. Checkout Code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      # 2. Set up Go environment
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20' # Or your desired Go version
 
+      # 3. Build Go Application
+      #    (Assumes your Dockerfile might use the pre-built binary,
+      #     or you might adjust Dockerfile for multi-stage build)
+      - name: Build Go Application
+        run: go build -v -o myapp ./... # Build the application, output to 'myapp' (adjust name if needed)
+
+      # 4. Run Go Tests
+      - name: Test Go Application
+        run: go test -v ./...
+
+      # --- Docker Steps ---
+
+      # 5. Set up QEMU (Recommended for multi-platform builds, optional if only building for linux/amd64)
+      #    See: https://github.com/docker/setup-qemu-action
+      # - name: Set up QEMU
+      #   uses: docker/setup-qemu-action@v3
+
+      # 6. Set up Docker Buildx
+      #    Buildx is needed for advanced features like caching and multi-platform builds
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3 # Uses BuildKit engine
 
-      - name: Validate Docker Hub Secrets
-        run: |
-          if [ -z "${{ secrets.DOCKER_HUB_USERNAME }}" ]; then
-            echo "::error::DOCKER_HUB_USERNAME secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.DOCKER_HUB_TOKEN }}" ]; then
-            echo "::error::DOCKER_HUB_TOKEN secret is not set"
-            exit 1
-          fi
-          echo "Docker Hub secrets validation passed"
-
-      - name: Login to Docker Hub
+      # 7. Log in to the Container Registry (GHCR)
+      #    Only log in when pushing (not on Pull Requests)
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # Use the built-in GITHUB_TOKEN
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels) for Docker
+      # 8. Extract Docker metadata (tags, labels)
+      #    Generates tags like 'latest', git sha, and version tags automatically
+      - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v5 # Automatically generates tags and labels
         with:
-          images: |
-            ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
-          # Generate tags based on git tag ('v1.2.3') and 'latest' for tags
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable=true # Always generate latest tag when triggered by tag or dispatch
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Example tags generated:
+          # type=schedule
+          # type=ref,event=branch
+          # type=ref,event=pr
+          # type=semver,pattern={{version}}
+          # type=semver,pattern={{major}}.{{minor}}
+          # type=semver,pattern={{major}}
+          # type=sha
 
+      # 9. Build and push Docker image
+      #    - Builds the image using Dockerfile in the context root.
+      #    - Pushes only if the event is NOT a pull_request.
+      #    - Uses tags and labels generated by the metadata action.
+      #    - Leverages GHA cache for faster subsequent builds.
       - name: Build and push Docker image
-        id: build-push
+        id: build-and-push
         uses: docker/build-push-action@v5
         with:
-          context: .
-          push: ${{ github.event_name != 'pull_request' }} # Only push on tags/dispatch, not PRs
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          context: . # Build context is the root of the repository
+          file: ./Dockerfile # Explicitly state the Dockerfile path (optional if it's named 'Dockerfile' in root)
+          push: ${{ github.event_name != 'pull_request' }} # Only push on main branch pushes or tags
+          tags: ${{ steps.meta.outputs.tags }}             # Use tags from metadata step
+          labels: ${{ steps.meta.outputs.labels }}           # Use labels from metadata step
+          cache-from: type=gha                             # Use GitHub Actions cache as source
+          cache-to: type=gha,mode=max                      # Write to GitHub Actions cache (mode=max for potentially larger cache)
 
-      - name: Print Image Details
-        if: steps.build-push.outputs.digest # Only run if image was built/pushed
-        run: |
-          echo "Docker Image Tags: ${{ steps.meta.outputs.tags }}"
-          echo "Docker Image Digest: ${{ steps.build-push.outputs.digest }}"
+      # --- Signing Steps (Optional but Recommended) ---
 
-  create-release:
-    name: Create GitHub Release
-    needs: [build-go, build-and-push-docker] # Depends on both previous jobs
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # Needed to create releases and upload assets
-    # Only run this job for tag pushes (starting with 'v')
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - name: Checkout code (needed for git archive)
-        uses: actions/checkout@v4
-        with:
-            fetch-depth: 0 # Fetch all history for git archive
+      # 10. Install Cosign for signing the image
+      #     Only install if we are pushing the image
+      - name: Install Cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3.5.0 # Use a specific version or latest
+        # uses: sigstore/cosign-installer@main # Or track main branch (less stable)
+        # with:
+        #   cosign-release: 'v2.2.4' # Optionally specify a version
 
-      - name: Download Go Binaries Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.build-go.outputs.binary_artifact_name }}
-          path: ./release-assets/binaries # Download into a sub-directory
-
-      - name: Create Source Code Archive
-        run: |
-          mkdir -p ./release-assets/source # Create source sub-directory
-          git archive --format=tar.gz -o ./release-assets/source/source-code-${{ github.ref_name }}.tar.gz HEAD
-          git archive --format=zip -o ./release-assets/source/source-code-${{ github.ref_name }}.zip HEAD
-
-      - name: List downloaded and generated files
-        run: ls -R ./release-assets
-
-      - name: Generate Release Notes Body
-        id: generate_notes
-        run: |
-          # Get the tag name (e.g., v1.0.0)
-          TAG_NAME="${{ github.ref_name }}"
-          # Get the previous tag (for generating changelog - optional enhancement)
-          # PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
-          # echo "Previous tag: $PREVIOUS_TAG"
-
-          # Start release notes
-          echo "## Release Notes for ${TAG_NAME}" > release_body.md
-          echo "" >> release_body.md
-          echo "This release includes the compiled application binary for Linux (amd64), source code archives, and updated Docker images." >> release_body.md
-          echo "" >> release_body.md
-
-          # (Optional) Auto-generate changelog from commits
-          # echo "### Changes" >> release_body.md
-          # git log ${PREVIOUS_TAG}..${TAG_NAME} --pretty=format:"* %s (%h)" >> release_body.md
-          # echo "" >> release_body.md
-
-          echo "**Docker Images:**" >> release_body.md
-          # Use the tags generated by the metadata action if available
-          DOCKER_TAGS=$(echo "${{ needs.build-and-push-docker.outputs.docker_tags }}" | sed -e 's/,/, /g') # Add spaces for readability
-          echo "- Tags: \`${DOCKER_TAGS:-${TAG_NAME}, latest}\`" >> release_body.md # Fallback if output not available
-          echo "- Docker Hub: \`${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}\`" >> release_body.md
-          echo "- GitHub Packages: \`ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}\`" >> release_body.md
-          if [ -n "${{ needs.build-and-push-docker.outputs.docker_digest }}" ]; then
-             echo "- Digest: \`${{ needs.build-and-push-docker.outputs.docker_digest }}\`" >> release_body.md
-          fi
-          echo "" >> release_body.md
-
-          echo "**Assets:**" >> release_body.md
-          echo "- \`${{ needs.build-go.outputs.binary_basename_linux_amd64 }}\`: Compiled static binary for Linux (amd64)" >> release_body.md
-          echo "- \`source-code-${TAG_NAME}.tar.gz\`: Source code archive (tar.gz)" >> release_body.md
-          echo "- \`source-code-${TAG_NAME}.zip\`: Source code archive (zip)" >> release_body.md
-          echo "" >> release_body.md
-
-          # Output the body content for the release action
-          body_content=$(cat release_body.md)
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "$body_content" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release and Upload Assets
-        uses: softprops/action-gh-release@v2 # Use v2
-        with:
-          name: Release ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          body: ${{ steps.generate_notes.outputs.body }} # Use generated body directly
-          # Upload all assets from the release-assets directory and its subdirectories
-          files: |
-            ./release-assets/**/*
-          draft: false
-          prerelease: false
+      # 11. Sign the published Docker image
+      #     Only sign if we pushed the image (not on Pull Requests)
+      #     Uses Sigstore's keyless signing with GitHub OIDC token
+      - name: Sign the published Docker image
+        if: github.event_name != 'pull_request'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass the tags and digest output from the build-push step
+          COSIGN_EXPERIMENTAL: "true" # Required for keyless signing
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        # Sign each tag with the digest
+        run: |
+          echo "Signing digest ${{ env.DIGEST }} with tags:"
+          echo "${TAGS}"
+          echo "${TAGS}" | sed 's/,/\n/g' | while read tag; do
+            echo "Signing ${tag}..."
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
