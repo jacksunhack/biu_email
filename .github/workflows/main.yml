@@ -1,0 +1,151 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  CONFIG_FILE: .github/config/action-config.yml
+
+jobs:
+  load-config:
+    runs-on: ubuntu-latest
+    outputs:
+      config: ${{ steps.read-config.outputs.config }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read-config
+        run: |
+          echo "config=$(cat ${{ env.CONFIG_FILE }} | yq -o json)" >> $GITHUB_OUTPUT
+
+  build:
+    name: Build Go Project
+    needs: load-config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ fromJson(needs.load-config.outputs.config).go.version }}
+          
+      - name: Get dependencies
+        run: go mod download
+        
+      - name: Build
+        run: go build ${{ fromJson(needs.load-config.outputs.config).go.build_flags }} ./...
+        
+      - name: Test
+        run: go test -v ./...
+        
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}
+          path: ${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}
+
+  docker:
+    name: Build and Push Docker Image
+    needs: [load-config, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ fromJson(needs.load-config.outputs.config).docker.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ fromJson(needs.load-config.outputs.config).docker.registry }}/${{ github.repository }}
+          tags: ${{ join(fromJson(needs.load-config.outputs.config).docker.image_tags, '\n') }}
+            
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  release:
+    name: Create Release
+    needs: [load-config, build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ fromJson(needs.load-config.outputs.config).go.version }}
+          
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib gcc-mingw-w64
+          
+      - name: Build for multiple platforms
+        run: |
+          # 创建输出目录
+          mkdir -p dist
+          
+          # 从配置文件读取平台信息并构建
+          ${{ toJSON(fromJson(needs.load-config.outputs.config).go.platforms) }} | jq -c '.[]' | while read -r platform; do
+            export GOOS=$(echo $platform | jq -r '.GOOS')
+            export GOARCH=$(echo $platform | jq -r '.GOARCH')
+            
+            OUTPUT="dist/${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}-${GOOS}-${GOARCH}"
+            if [ "$GOOS" = "windows" ]; then
+              OUTPUT="${OUTPUT}.exe"
+            fi
+            
+            echo "Building for ${GOOS}/${GOARCH}..."
+            go build -o "$OUTPUT" ${{ fromJson(needs.load-config.outputs.config).go.build_flags }}
+          done
+          
+          # 创建Debian包
+          mkdir -p debian/DEBIAN
+          mkdir -p debian/usr/local/bin
+          cp dist/${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}-linux-amd64 \
+             debian/usr/local/bin/${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}
+          chmod +x debian/usr/local/bin/${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}
+          
+          cat > debian/DEBIAN/control << EOF
+          Package: ${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}
+          Version: ${GITHUB_REF#refs/tags/v}
+          Section: ${{ fromJson(needs.load-config.outputs.config).release.debian.section }}
+          Priority: ${{ fromJson(needs.load-config.outputs.config).release.debian.priority }}
+          Architecture: amd64
+          Maintainer: ${{ fromJson(needs.load-config.outputs.config).release.debian.maintainer }}
+          Description: ${{ fromJson(needs.load-config.outputs.config).release.debian.description }}
+          EOF
+          
+          dpkg-deb --build debian dist/${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}_${GITHUB_REF#refs/tags/v}_amd64.deb
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}-*
+            dist/${{ fromJson(needs.load-config.outputs.config).release.debian.package_name }}_*_amd64.deb
+          draft: ${{ fromJson(needs.load-config.outputs.config).release.github.draft }}
+          prerelease: ${{ fromJson(needs.load-config.outputs.config).release.github.prerelease }}
+          generate_release_notes: ${{ fromJson(needs.load-config.outputs.config).release.github.generate_notes }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
