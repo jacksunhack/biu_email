@@ -11,9 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -84,7 +82,7 @@ func ChunkUploadHandler(config *Config) gin.HandlerFunc { // Accept config
 		missingParams := []string{}
 		if uploadID == "" {
 			missingParams = append(missingParams, "uploadId")
-		} else if !isValidUploadID(uploadID) { // --- Add validation ---
+		} else if !IsValidUploadID(uploadID) { // --- Use shared validation ---
 			log.Printf("[ChunkUpload] Invalid uploadId format received: %s", uploadID)
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid uploadId format"})
 			return
@@ -242,7 +240,7 @@ func CheckUploadStatusHandler(config *Config) gin.HandlerFunc { // Accept config
 			return
 		}
 		// --- Add validation ---
-		if !isValidUploadID(uploadID) {
+		if !IsValidUploadID(uploadID) { // --- Use shared validation ---
 			log.Printf("[CheckStatus] Invalid uploadId format received: %s", uploadID)
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid uploadId format"})
 			return
@@ -566,28 +564,4 @@ func EnsureUploadDirectoriesExist(config *Config) error { // Rename and return e
 
 // Removed unused sendErrorResponse and sendSuccessResponse functions
 
-// isValidUploadID checks if the provided ID is a valid 32-character hex string
-// and does not contain path separators.
-// isValidUploadID checks if the provided string is a valid upload ID format (e.g., hex)
-// and doesn't contain path traversal characters.
-func isValidUploadID(id string) bool {
-	// Basic check for path traversal characters
-	if strings.Contains(id, "..") || strings.Contains(id, "/") || strings.Contains(id, "\\") {
-		log.Printf("[Validation] Invalid characters found in upload ID: %s", id)
-		return false
-	}
-	// Check if it looks like a hex string (assuming MD5 hash length)
-	if len(id) != 32 {
-		log.Printf("[Validation] Invalid length for upload ID: %s (expected 32)", id)
-		return false
-	}
-	// Use a precompiled regex for efficiency if called frequently
-	// var validHexRegex = regexp.MustCompile(`^[a-fA-F0-9]+$`)
-	// return validHexRegex.MatchString(id)
-	// For one-off checks, MatchString is fine:
-	match, _ := regexp.MatchString(`^[a-fA-F0-9]+$`, id) // Use regexp.MatchString
-	if !match {
-		log.Printf("[Validation] Invalid hex format for upload ID: %s", id)
-	}
-	return match
-}
+// Removed local isValidUploadID function, will use IsValidUploadID from utils.go

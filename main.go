@@ -1,661 +1,24 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
+	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings" // Import strings package
+	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	// _ "github.com/go-sql-driver/mysql" // Keep commented or remove if not needed
 )
 
-// indexHTML 包含完整的前端代码
-const indexHTML = `
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Biu~ 阅后即焚 (客户端加密版)</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 700px; margin: auto; background-color: #f8f9fa; color: #343a40; }
-        .container { background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-        h1, h2 { color: #495057; text-align: center; margin-bottom: 1.5rem;}
-        h1 { font-size: 2rem;}
-        h2 { font-size: 1.5rem; color: #6c757d;}
-        textarea, input[type="file"], input[type="text"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; font-size: 1rem; }
-        textarea { min-height: 120px; resize: vertical; }
-        button { background-color: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-right: 10px; transition: background-color 0.2s ease-in-out; }
-        button:hover { background-color: #0056b3; }
-        #switchType { background-color: #ffc107; color: #212529;}
-        #switchType:hover { background-color: #e0a800; }
-        #result, #content-area, #status { margin-top: 20px; padding: 15px; border-radius: 4px; font-size: 0.95rem; }
-        #result { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; word-wrap: break-word; }
-        #result a { color: #0c5460; font-weight: bold; text-decoration: none; }
-        #result a:hover { text-decoration: underline; }
-        #content-area { background-color: #e9ecef; border: 1px solid #dee2e6; color: #495057; white-space: pre-wrap; word-wrap: break-word; min-height: 100px; }
-        #status { background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; }
-        #error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
-        .hidden { display: none; }
-        label { display: block; margin-bottom: 5px; font-weight: 500; color: #495057;}
-        .form-group { margin-bottom: 1rem; }
-        .button-container { display: flex; justify-content: flex-start; align-items: center; margin-top: 1.5rem; }
-        .loader { border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #007bff; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; margin-left: 10px;}
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6; font-size: 0.9em; color: #6c757d; }
-        footer a { color: #007bff; text-decoration: none; }
-        footer a:hover { text-decoration: underline; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Biu~ 阅后即焚</h1>
-        <h2>(客户端加密版)</h2>
-
-        <div class="form-group">
-            <label for="contentType">内容类型:</label>
-            <button id="switchType">切换到文件模式</button>
-        </div>
-
-        <form id="encryptForm">
-            <div id="textMode">
-                <div class="form-group">
-                    <label for="message">输入文本:</label>
-                    <textarea id="message" rows="8" placeholder="在此输入你的秘密消息..."></textarea>
-                </div>
-            </div>
-            <div id="fileMode" class="hidden">
-                <div class="form-group">
-                    <label for="fileInput">选择文件:</label>
-                    <input type="file" id="fileInput">
-                    <small id="fileSizeWarning" class="hidden" style="color: red;">文件大小超过限制！</small>
-                </div>
-            </div>
-            <div class="button-container">
-                <button type="submit" id="submitBtn">加密并生成链接</button>
-                <div id="loader" class="loader hidden"></div>
-            </div>
-        </form>
-
-        <div id="status" class="hidden"></div>
-        <div id="error" class="hidden"></div>
-        <div id="result" class="hidden">
-            <p>成功！你的阅后即焚链接：</p>
-            <a id="link" href="#" target="_blank"></a>
-            <p><small>请注意：此链接仅能访问一次，密钥存储在 # 之后的部分，不会发送到服务器。</small></p>
-        </div>
-
-        <div id="content-area" class="hidden">
-            <h2>解密内容:</h2>
-            <div id="decrypted-content"></div>
-        </div>
-    </div>
-
-    <footer>
-        Powered by Go & Gin | Client-Side Encryption with AES-GCM + HKDF
-        <br>
-        <a href="https://github.com/jacksunhack/biu_email" target="_blank">GitHub Repository</a>
-    </footer>
-
-    <script>
-        let isFileMode = false;
-        let maxFileSizeMB = 15; // Default, will be updated from config
-        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunk size
-
-        // --- DOM Elements ---
-        const switchTypeButton = document.getElementById('switchType');
-        const textModeDiv = document.getElementById('textMode');
-        const fileModeDiv = document.getElementById('fileMode');
-        const messageTextarea = document.getElementById('message');
-        const fileInput = document.getElementById('fileInput');
-        const fileSizeWarning = document.getElementById('fileSizeWarning');
-        const encryptForm = document.getElementById('encryptForm');
-        const submitBtn = document.getElementById('submitBtn');
-        const loader = document.getElementById('loader');
-        const statusDiv = document.getElementById('status');
-        const errorDiv = document.getElementById('error');
-        const resultDiv = document.getElementById('result');
-        const linkElement = document.getElementById('link');
-        const contentAreaDiv = document.getElementById('content-area');
-        const decryptedContentDiv = document.getElementById('decrypted-content');
-
-        // --- Utility Functions ---
-        function arrayBufferToBase64(buffer) {
-            let binary = '';
-            const bytes = new Uint8Array(buffer);
-            const len = bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-                binary += String.fromCharCode(bytes[i]);
-            }
-            return window.btoa(binary);
-        }
-
-        function base64ToArrayBuffer(base64) {
-            const binary_string = window.atob(base64);
-            const len = binary_string.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binary_string.charCodeAt(i);
-            }
-            return bytes.buffer;
-        }
-
-        function showStatus(message, isError = false) {
-            hideMessages();
-            const targetDiv = isError ? errorDiv : statusDiv;
-            targetDiv.textContent = message;
-            targetDiv.classList.remove('hidden');
-        }
-
-        function showResult(url) {
-            hideMessages();
-            linkElement.href = url;
-            linkElement.textContent = url;
-            resultDiv.classList.remove('hidden');
-        }
-
-        function hideMessages() {
-            statusDiv.classList.add('hidden');
-            errorDiv.classList.add('hidden');
-            resultDiv.classList.add('hidden');
-            contentAreaDiv.classList.add('hidden');
-        }
-
-        function setLoading(isLoading) {
-            if (isLoading) {
-                loader.classList.remove('hidden');
-                submitBtn.disabled = true;
-                submitBtn.textContent = '处理中...';
-            } else {
-                loader.classList.add('hidden');
-                submitBtn.disabled = false;
-                submitBtn.textContent = '加密并生成链接';
-            }
-        }
-
-        // --- Crypto Functions ---
-        async function generateMasterKey() {
-            const keyBytes = window.crypto.getRandomValues(new Uint8Array(32)); // 256 bits
-            return arrayBufferToBase64(keyBytes); // Store master key as base64
-        }
-
-        async function deriveEncryptionKey(masterKeyBase64, salt) {
-            const masterKey = base64ToArrayBuffer(masterKeyBase64);
-            const keyMaterial = await window.crypto.subtle.importKey(
-                "raw",
-                masterKey,
-                { name: "HKDF" },
-                false,
-                ["deriveKey"]
-            );
-            return window.crypto.subtle.deriveKey(
-                {
-                    name: "HKDF",
-                    salt: salt,
-                    info: new TextEncoder().encode("AES-GCM Encryption Key"), // Context info
-                    hash: "SHA-256"
-                },
-                keyMaterial,
-                { name: "AES-GCM", length: 256 },
-                true, // Allow export for debugging if needed, set to false in prod
-                ["encrypt", "decrypt"]
-            );
-        }
-
-        async function encryptData(dataBuffer, encryptionKey) {
-            const iv = window.crypto.getRandomValues(new Uint8Array(12)); // 96 bits is recommended for AES-GCM
-            const encryptedContent = await window.crypto.subtle.encrypt(
-                {
-                    name: "AES-GCM",
-                    iv: iv
-                },
-                encryptionKey,
-                dataBuffer
-            );
-            return { encryptedContent, iv };
-        }
-
-        async function decryptData(encryptedBuffer, iv, encryptionKey) {
-            try {
-                const decryptedContent = await window.crypto.subtle.decrypt(
-                    {
-                        name: "AES-GCM",
-                        iv: iv
-                    },
-                    encryptionKey,
-                    encryptedBuffer
-                );
-                return decryptedContent;
-            } catch (e) {
-                console.error("Decryption failed:", e);
-                throw new Error("解密失败，密钥或数据可能已损坏。");
-            }
-        }
-
-        // --- Event Listeners ---
-        switchTypeButton.addEventListener('click', () => {
-            isFileMode = !isFileMode;
-            if (isFileMode) {
-                textModeDiv.classList.add('hidden');
-                fileModeDiv.classList.remove('hidden');
-                switchTypeButton.textContent = '切换到文本模式';
-                switchTypeButton.style.backgroundColor = '#17a2b8'; // Info color
-            } else {
-                textModeDiv.classList.remove('hidden');
-                fileModeDiv.classList.add('hidden');
-                switchTypeButton.textContent = '切换到文件模式';
-                switchTypeButton.style.backgroundColor = '#ffc107'; // Warning color
-            }
-            hideMessages(); // Clear status/results when switching modes
-        });
-
-        fileInput.addEventListener('change', () => {
-            const file = fileInput.files[0];
-            if (file) {
-                const maxSizeBytes = maxFileSizeMB * 1024 * 1024;
-                if (file.size > maxSizeBytes) {
-                    fileSizeWarning.classList.remove('hidden');
-                    submitBtn.disabled = true;
-                } else {
-                    fileSizeWarning.classList.add('hidden');
-                    submitBtn.disabled = false;
-                }
-            } else {
-                 fileSizeWarning.classList.add('hidden');
-                 submitBtn.disabled = false;
-            }
-        });
-
-        encryptForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            hideMessages();
-            setLoading(true);
-
-            try {
-                const masterKeyBase64 = await generateMasterKey();
-                const salt = window.crypto.getRandomValues(new Uint8Array(16)); // Salt for HKDF
-                const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
-
-                if (isFileMode) {
-                    // --- File Mode: Encrypt then Chunk Upload ---
-                    const file = fileInput.files[0];
-                    if (!file) {
-                        throw new Error("请选择一个文件。");
-                    }
-                    const maxSizeBytes = maxFileSizeMB * 1024 * 1024;
-                    if (file.size > maxSizeBytes) {
-                        throw new Error('文件大小超过限制 (' + maxFileSizeMB + ' MB)。');
-                    }
-
-                    showStatus("正在读取文件...");
-                    const dataBuffer = await file.arrayBuffer();
-
-                    showStatus("正在加密文件 (这可能需要一些时间)...");
-                    // Encrypt the entire file content first
-                    const { encryptedContent, iv } = await encryptData(dataBuffer, encryptionKey);
-
-                    // Now handle the chunk upload of the encrypted content
-                    await handleChunkUpload(file.name, file.size, encryptedContent, iv, salt, masterKeyBase64);
-
-                } else {
-                    // --- Text Mode: Use original /api/store ---
-                    const message = messageTextarea.value;
-                    if (!message.trim()) {
-                        throw new Error("请输入文本消息。");
-                    }
-                    const dataBuffer = new TextEncoder().encode(message);
-                    showStatus("正在加密文本...");
-
-                    const { encryptedContent, iv } = await encryptData(dataBuffer, encryptionKey);
-
-                    const encryptedBase64 = arrayBufferToBase64(encryptedContent);
-                    const ivBase64 = arrayBufferToBase64(iv);
-                    const saltBase64 = arrayBufferToBase64(salt);
-
-                    showStatus("正在将加密数据发送到服务器...");
-
-                    const payload = {
-                        encryptedData: encryptedBase64, // Send full encrypted data for text
-                        iv: ivBase64,
-                        salt: saltBase64,
-                    };
-
-                    const response = await fetch('/api/store', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({ error: '无法解析服务器错误响应' }));
-                        throw new Error('服务器错误 (' + response.status + '): ' + (errorData.error || response.statusText));
-                    }
-
-                    const resultData = await response.json();
-                    if (!resultData.id) {
-                        throw new Error("服务器未能返回数据 ID。");
-                    }
-
-                    const dataId = resultData.id;
-                    const shareUrl = window.location.origin + window.location.pathname + '?id=' + dataId + '#' + masterKeyBase64;
-                    showResult(shareUrl);
-                }
-
-            } catch (error) {
-                console.error("处理过程中出错:", error);
-                showStatus('错误: ' + error.message, true);
-            } finally {
-                // setLoading(false); // handleChunkUpload will manage loading state for file uploads
-                if (!isFileMode) { // Only reset loading if it was text mode
-                    setLoading(false);
-                }
-            }
-        });
-
-        // --- Chunk Upload Functions ---
-        async function handleChunkUpload(originalFilename, originalFilesize, encryptedFileBuffer, iv, salt, masterKeyBase64) {
-            showStatus("正在初始化分片上传...");
-
-            // 1. Initialize Upload
-            let uploadId;
-            try {
-                const initResponse = await fetch('/api/upload/init', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fileName: originalFilename, fileSize: originalFilesize }) // Send original size
-                });
-                if (!initResponse.ok) {
-                    const errorData = await initResponse.json().catch(() => ({ message: '初始化上传失败' }));
-                    throw new Error('初始化失败 (' + initResponse.status + '): ' + errorData.message);
-                }
-                const initData = await initResponse.json();
-                uploadId = initData.uploadId;
-                if (!uploadId) {
-                    throw new Error("未能从服务器获取 Upload ID。");
-                }
-                console.log("Upload initialized with ID:", uploadId);
-            } catch (error) {
-                showStatus('错误: ' + error.message, true);
-                setLoading(false);
-                return; // Stop upload process
-            }
-
-            // 2. Upload Chunks
-            const totalChunks = Math.ceil(encryptedFileBuffer.byteLength / CHUNK_SIZE);
-            console.log('Starting chunk upload: ' + totalChunks + ' chunks');
-
-            for (let chunkNumber = 1; chunkNumber <= totalChunks; chunkNumber++) {
-                const start = (chunkNumber - 1) * CHUNK_SIZE;
-                const end = Math.min(start + CHUNK_SIZE, encryptedFileBuffer.byteLength);
-                const chunkBlob = new Blob([encryptedFileBuffer.slice(start, end)]);
-
-                showStatus('正在上传分片 ' + chunkNumber + ' / ' + totalChunks + '...');
-
-                const formData = new FormData();
-                formData.append('uploadId', uploadId);
-                formData.append('chunkNumber', chunkNumber.toString());
-                formData.append('totalChunks', totalChunks.toString());
-                formData.append('fileName', originalFilename); // Send original filename
-                formData.append('fileSize', originalFilesize.toString()); // Send original filesize
-                formData.append('chunk', chunkBlob, 'chunk_' + chunkNumber); // Add chunk blob
-
-                try {
-                    const chunkResponse = await fetch('/api/upload/chunk', {
-                        method: 'POST',
-                        body: formData // Send as FormData
-                    });
-
-                    if (!chunkResponse.ok) {
-                        const errorData = await chunkResponse.json().catch(() => ({ message: '上传分片 ' + chunkNumber + ' 失败' }));
-                        throw new Error('上传分片 ' + chunkNumber + ' 失败 (' + chunkResponse.status + '): ' + errorData.message);
-                    }
-                    const chunkResult = await chunkResponse.json();
-                    console.log('Chunk ' + chunkNumber + ' uploaded:', chunkResult.message);
-
-                } catch (error) {
-                    showStatus('错误: ' + error.message, true);
-                    setLoading(false);
-                    return; // Stop upload process
-                }
-            }
-
-            // 3. Finalize Upload (Polling and Metadata Storage)
-            showStatus("所有分片上传完毕，正在等待服务器合并...");
-            await finalizeUpload(uploadId, iv, salt, originalFilename, masterKeyBase64);
-        }
-
-        async function finalizeUpload(uploadId, iv, salt, originalFilename, masterKeyBase64) {
-            const pollInterval = 3000; // Poll every 3 seconds
-            let attempts = 0;
-            const maxAttempts = 20; // Max 1 minute of polling
-
-            const poll = async () => {
-                attempts++;
-                if (attempts > maxAttempts) {
-                    throw new Error("服务器合并超时。请稍后再试。");
-                }
-
-                try {
-                    const statusResponse = await fetch('/api/upload/status?uploadId=' + uploadId);
-                    if (!statusResponse.ok) {
-                        // If status is 404, it might mean the merge failed and cleaned up, or still processing
-                        if (statusResponse.status === 404) {
-                             console.log('Polling attempt ' + attempts + ': Upload status not found yet.');
-                             setTimeout(poll, pollInterval); // Continue polling
-                             return;
-                        }
-                        const errorData = await statusResponse.json().catch(() => ({ message: '检查状态失败' }));
-                        throw new Error('检查状态失败 (' + statusResponse.status + '): ' + errorData.message);
-                    }
-
-                    const statusData = await statusResponse.json();
-
-                    if (statusData.completed) {
-                        console.log("Server reported merge completed.");
-                        showStatus("文件合并成功，正在存储元数据...");
-
-                        // Store metadata using the new endpoint
-                        const ivBase64 = arrayBufferToBase64(iv);
-                        const saltBase64 = arrayBufferToBase64(salt);
-                        const metadataPayload = {
-                            id: uploadId,
-                            iv: ivBase64,
-                            salt: saltBase64,
-                            originalFilename: originalFilename
-                        };
-
-                        const metaResponse = await fetch('/api/store/metadata', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(metadataPayload)
-                        });
-
-                        if (!metaResponse.ok) {
-                            const errorData = await metaResponse.json().catch(() => ({ error: '存储元数据失败' }));
-                            throw new Error('存储元数据失败 (' + metaResponse.status + '): ' + errorData.error);
-                        }
-
-                        console.log("Metadata stored successfully for ID:", uploadId);
-                        const shareUrl = window.location.origin + window.location.pathname + '?id=' + uploadId + '#' + masterKeyBase64;
-                        showResult(shareUrl);
-                        setLoading(false); // Final success
-
-                    } else {
-                        // Not completed yet, poll again
-                        console.log('Polling attempt ' + attempts + ': Merge not complete yet.');
-                        showStatus('正在等待服务器合并... (' + attempts + '/' + maxAttempts + ')');
-                        setTimeout(poll, pollInterval);
-                    }
-                } catch (error) {
-                    showStatus('错误: ' + error.message, true);
-                    setLoading(false);
-                }
-            };
-
-            setTimeout(poll, pollInterval); // Start polling
-        }
-
-        // --- Decryption Logic (on page load if URL contains ID and Key) ---
-        async function handleDecryptionOnLoad() {
-            console.log('handleDecryptionOnLoad triggered.'); // <-- 添加日志 1
-            const urlParams = new URLSearchParams(window.location.search);
-            const dataId = urlParams.get('id');
-            const masterKeyBase64 = window.location.hash.substring(1); // Get key from URL fragment
-
-            if (dataId && masterKeyBase64) {
-                console.log('Found dataId:', dataId, 'and masterKeyBase64:', masterKeyBase64 ? 'present' : 'missing'); // <-- 添加日志 2
-                hideMessages();
-                contentAreaDiv.classList.remove('hidden');
-                decryptedContentDiv.innerHTML = '正在获取元数据...';
-                setLoading(true); // Use loader visually
-
-                let metadata;
-                let iv;
-                let salt;
-                let originalFilename;
-
-                 try {
-                    // 1. Fetch data from /api/data/:id - This endpoint now returns different structures based on content type
-                    decryptedContentDiv.innerHTML = '正在获取数据...';
-                    const response = await fetch('/api/data/' + dataId);
-                    if (!response.ok) {
-                        if (response.status === 404) {
-                            throw new Error("数据未找到或已被销毁。");
-                        }
-                        const errorData = await response.json().catch(() => ({ error: '无法解析服务器响应' }));
-                        throw new Error('获取数据时服务器错误 (' + response.status + '): ' + (errorData.error || response.statusText));
-                    console.log('Received data from /api/data:', JSON.stringify(responseData)); // <-- Log received data
-                    }
-                    const responseData = await response.json();
-
-                    // 2. Check response format to determine if it's text or file metadata
-                    // Check for lowercase keys based on Go struct 'json' tags for StoredData
-                    if (responseData.encryptedData && responseData.iv && responseData.salt) { // Check lowercase keys
-                        // --- Handle Text Message Decryption ---
-                        decryptedContentDiv.innerHTML = '正在解密文本消息...';
-                        iv = base64ToArrayBuffer(responseData.iv); // Use lowercase
-                        salt = base64ToArrayBuffer(responseData.salt); // Use lowercase
-                        const encryptedData = base64ToArrayBuffer(responseData.encryptedData); // Use lowercase
-
-                        // 3. Decrypt Text
-                        const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
-                        const decryptedBuffer = await decryptData(encryptedData, iv, encryptionKey);
-
-                        // 4. Display Text
-                        const decryptedText = new TextDecoder().decode(decryptedBuffer);
-                        decryptedContentDiv.textContent = decryptedText;
-                        decryptedContentDiv.innerHTML += "<br><br><small>消息将在销毁后从服务器删除。</small>";
-
-                        // 5. Burn Text Data
-                        try {
-                            await fetch('/api/burn/' + dataId, { method: 'POST' });
-                            console.log("Burn request sent for text data ID:", dataId);
-                        } catch (burnError) {
-                            console.warn("发送销毁文本请求失败:", burnError);
-                            decryptedContentDiv.innerHTML += "<br><strong style='color:orange;'>警告：无法自动销毁服务器上的文本数据。</strong>";
-                        }
-
-                    } else if (responseData.iv && responseData.salt) { // Check lowercase keys for metadata too
-                        // --- Handle File Download and Decryption ---
-                        // Response might contain metadata with lowercase keys if StoredMetadata isn't used or marshaled differently
-                        decryptedContentDiv.innerHTML = '获取到文件元数据，正在下载加密文件...';
-                        iv = base64ToArrayBuffer(responseData.iv); // Use lowercase
-                        salt = base64ToArrayBuffer(responseData.salt); // Use lowercase
-                        originalFilename = responseData.originalFilename; // Use lowercase
-
-                        // 3. Fetch Encrypted File Content
-                        const downloadResponse = await fetch('/api/download/' + dataId); // Assume /api/download handles file retrieval
-                        if (!downloadResponse.ok) {
-                            if (downloadResponse.status === 404) {
-                                throw new Error("加密文件内容未找到或已被销毁。");
-                            }
-                            throw new Error('下载加密文件时服务器错误 (' + downloadResponse.status + '): ' + downloadResponse.statusText);
-                        }
-
-                        decryptedContentDiv.innerHTML = '文件下载完成，正在解密...';
-                        const encryptedFileBuffer = await downloadResponse.arrayBuffer();
-
-                        // 4. Decrypt File
-                        const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
-                        const decryptedBuffer = await decryptData(encryptedFileBuffer, iv, encryptionKey);
-
-                        // 5. Trigger File Download
-                        const filenameToUse = originalFilename || ('decrypted_file_' + dataId + '.bin'); // Fallback filename
-                        decryptedContentDiv.innerHTML = '文件已解密: <strong>' + filenameToUse + '</strong><br>准备下载...';
-                        const blob = new Blob([decryptedBuffer]);
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = filenameToUse;
-                        console.log('Triggering download for:', filenameToUse);
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                        decryptedContentDiv.innerHTML += "<br>下载已开始。文件将在下载后从服务器销毁。";
-
-                        // 6. Burn File Data
-                        try {
-                            // Assuming the same burn endpoint works for data stored via file flow
-                            await fetch('/api/burn/' + dataId, { method: 'POST' });
-                            console.log("Burn request sent for file data ID:", dataId);
-                        } catch (burnError) {
-                            console.warn("发送销毁文件请求失败:", burnError);
-                            decryptedContentDiv.innerHTML += "<br><strong style='color:orange;'>警告：无法自动销毁服务器上的文件数据。</strong>";
-                        }
-
-                    } else {
-                        // Invalid response format from /api/data/:id
-                        throw new Error("从服务器接收到的数据格式无效或不完整。");
-                    }
-
-                } catch (error) {
-                    console.error("解密/获取过程中出错:", error);
-                    contentAreaDiv.classList.remove('hidden'); // Ensure area is visible for error
-                    decryptedContentDiv.innerHTML = '<span style="color:red;">错误: ' + error.message + '</span>';
-                } finally {
-                    setLoading(false);
-                }
-            }
-        }
-
-         // --- Initial Setup ---
-        document.addEventListener('DOMContentLoaded', async () => {
-            console.log("DOM fully loaded.");
-             // Fetch config first
-            try {
-                const configResponse = await fetch('/config');
-                if (configResponse.ok) {
-                    const configData = await configResponse.json();
-                    if (configData.maxFileSizeMB) {
-                        maxFileSizeMB = parseInt(configData.maxFileSizeMB, 10);
-                        console.log('Max file size loaded from config:', maxFileSizeMB, 'MB');
-                    } else {
-                         console.warn('Config endpoint did not return maxFileSizeMB.');
-                    }
-                } else {
-                    console.warn('Failed to load config from server, using default max file size:', maxFileSizeMB, 'MB');
-                }
-            } catch (error) {
-                console.error('Error fetching config:', error);
-                 showStatus('无法加载服务器配置: ' + error.message, true);
-            }
-
-
-            // Then handle decryption if needed
-            handleDecryptionOnLoad();
-        });
-
-    </script>
-</body>
-</html>
-\`
+//go:embed frontend/index.html frontend/static/*
+var embeddedFiles embed.FS
 
 var config *Config // Global config variable
 
@@ -690,54 +53,102 @@ func main() {
 	port := strconv.Itoa(config.Server.Port)
 	log.Printf("Server running on %s:%s", host, port)
 
-	// 设置 Gin 为 release 模式以提高性能
+	// 配置 gin
 	gin.SetMode(gin.ReleaseMode)
-	// Disable Gin's default logging to avoid duplicate timestamps if using custom log
-	// router := gin.New()
-	// router.Use(gin.Recovery()) // Use recovery middleware
-	router := gin.Default()               // Or keep default if its logging is acceptable
+	router := gin.New()
+	router.Use(gin.Recovery())
+
+	// 禁用自动重定向行为
+	router.RedirectTrailingSlash = false
+	router.RedirectFixedPath = false
+
+	// 设置信任所有代理
+	router.ForwardedByClientIP = true
+	router.SetTrustedProxies([]string{"127.0.0.1"})
+
 	router.MaxMultipartMemory = 512 << 20 // 512 MiB
 
 	// CORS Configuration
-	corsConfig := cors.DefaultConfig() // Start with defaults
-
-	// Check if allowed origins are specified in the config
-	if len(config.Server.AllowedOrigins) > 0 {
-		log.Printf("Configuring CORS with allowed origins: %v", config.Server.AllowedOrigins)
-		corsConfig.AllowOrigins = config.Server.AllowedOrigins
-		corsConfig.AllowAllOrigins = false // Explicitly disable AllowAllOrigins if specific origins are set
-	} else {
-		// If no origins are specified in config, disallow all cross-origin requests for better security.
-		// Alternatively, you could keep AllowAllOrigins = true for easier local dev, but log a warning.
-		log.Println("Warning: No allowed_origins specified in config.yaml. Disallowing all cross-origin requests.")
-		corsConfig.AllowOrigins = []string{} // Ensure it's an empty list
-		corsConfig.AllowAllOrigins = false
-	}
-
-	// Keep other default or necessary settings
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"} // Adjust methods as needed
-	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"} // Adjust headers as needed
-	corsConfig.AllowCredentials = true                                            // Allow credentials if needed
-
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowOrigins = []string{"http://localhost:3003", "http://127.0.0.1:3003"}
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
+	corsConfig.AllowCredentials = true
 	router.Use(cors.New(corsConfig))
 
-	// 处理根路径，返回嵌入的HTML内容
+	// 静态文件处理
+	staticFS := http.FS(embeddedFiles)
+	staticFiles, err := fs.Sub(embeddedFiles, "frontend/static")
+	if err != nil {
+		log.Fatalf("Failed to get static files: %v", err)
+	}
+
+	// 静态文件路由
+	router.StaticFS("/static", http.FS(staticFiles))
+
+	// 处理主页和其他路由
 	router.GET("/", func(c *gin.Context) {
-		// Check if the request is for the root path specifically
-		// Also handle direct access with ID and fragment (key) for decryption page
-		if (c.Request.URL.Path == "/" && c.Request.URL.RawQuery == "" && c.Request.URL.Fragment == "") ||
-			(strings.HasPrefix(c.Request.URL.RawQuery, "id=") && c.Request.URL.Fragment != "") {
-			c.Header("Content-Type", "text/html; charset=utf-8")
-			c.String(http.StatusOK, indexHTML) // Serve the same HTML, JS will handle decryption
-		} else {
-			// Optional: Handle other paths or return 404
-			// For simplicity, we can also just serve indexHTML for any GET request
-			// that isn't an API endpoint, letting the JS handle routing/display.
-			c.Header("Content-Type", "text/html; charset=utf-8")
-			c.String(http.StatusOK, indexHTML)
-			// Alternatively, return 404:
-			// c.String(http.StatusNotFound, "404 Not Found")
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		file, err := staticFS.Open("frontend/index.html")
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Could not open index.html")
+			return
 		}
+		defer file.Close()
+		stat, err := file.Stat()
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Could not stat index.html")
+			return
+		}
+		http.ServeContent(c.Writer, c.Request, "index.html", stat.ModTime(), file.(io.ReadSeeker))
+	})
+
+	// NoRoute handler
+	router.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+
+		// API 路径返回 404
+		if strings.HasPrefix(path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "API endpoint not found"})
+			return
+		}
+
+		// 短链接路径返回 404
+		if strings.HasPrefix(path, "/s/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Short link not found"})
+			return
+		}
+
+		// 静态文件路径返回 404
+		if strings.HasPrefix(path, "/static/") {
+			c.String(http.StatusNotFound, "Static file not found")
+			return
+		}
+
+		// favicon.ico 请求返回 404
+		if path == "/favicon.ico" {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		// 其他所有路径都返回 index.html
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		file, err := staticFS.Open("frontend/index.html")
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Could not open index.html")
+			return
+		}
+		defer file.Close()
+		stat, err := file.Stat()
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Could not stat index.html")
+			return
+		}
+		http.ServeContent(c.Writer, c.Request, "index.html", stat.ModTime(), file.(io.ReadSeeker))
 	})
 
 	// --- Short Link Endpoints ---
@@ -775,17 +186,25 @@ func main() {
 	})
 	// --- 结束新增 ---
 
-	// 普通HTTP模式
+	// Start the server
 	log.Printf("Server running HTTP on %s:%s", host, port)
-	if err := router.Run(fmt.Sprintf("%s:%s", host, port)); err != nil {
-		log.Fatalf("Failed to start HTTP server: %v", err)
+	err = router.Run(fmt.Sprintf("%s:%s", host, port))
+	if err != nil {
+		log.Printf("Error starting HTTP server: %v", err) // Print error instead of Fatalf
+		// os.Exit(1) // Optionally exit explicitly after logging
 	}
 }
 
 // ensureDataStorageDir ensures the directory for storing data files exists.
 // It's defined here to be accessible by main.
 func ensureDataStorageDir() error {
-	dataDir := filepath.Join("storage", "data") // Consistent path
+	// Use config path instead of hardcoded path
+	dataDir := config.Paths.DataStorageDir
+	if dataDir == "" {
+		// Fallback or default if not set in config, though config loading should handle defaults
+		dataDir = filepath.Join("storage", "data")
+		log.Printf("Warning: config.Paths.DataStorageDir is empty, using default: %s", dataDir)
+	}
 	// Use MkdirAll which creates parent directories if needed and doesn't return error if dir exists
 	if err := os.MkdirAll(dataDir, 0750); err != nil { // Use 0750 for better permissions
 		log.Printf("Error creating data storage directory '%s': %v", dataDir, err)
@@ -793,4 +212,12 @@ func ensureDataStorageDir() error {
 	}
 	log.Printf("Data storage directory ensured: %s", dataDir)
 	return nil
+}
+
+// serveIndexHTML 是一个辅助函数，用于统一处理 index.html 的服务
+func serveIndexHTML(c *gin.Context) {
+	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+	c.FileFromFS("frontend/index.html", http.FS(embeddedFiles))
 }

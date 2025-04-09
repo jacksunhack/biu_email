@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biu~ 阅后即焚 (客户端加密版)</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Biu~ 阅后即焚</h1>
+        <h2>(客户端加密版)</h2>
+
+        <div class="form-group">
+            <label for="contentType">内容类型:</label>
+            <button id="switchType">切换到文件模式</button>
+        </div>
+
+        <form id="encryptForm">
+            <div id="textMode">
+                <div class="form-group">
+                    <label for="message">输入文本:</label>
+                    <textarea id="message" rows="8" placeholder="在此输入你的秘密消息..."></textarea>
+                </div>
+            </div>
+            <div id="fileMode" class="hidden">
+                <div class="form-group">
+                    <label for="fileInput">选择文件:</label>
+                    <input type="file" id="fileInput">
+                    <small id="fileSizeWarning" class="hidden" style="color: red;">文件大小超过限制！</small>
+                </div>
+            </div>
+            <div class="button-container">
+                <button type="submit" id="submitBtn">加密并生成链接</button>
+                <div id="loader" class="loader hidden"></div>
+            </div>
+        </form>
+
+        <div id="status" class="hidden"></div>
+        <div id="error" class="hidden"></div>
+        <div id="result" class="hidden">
+            <p>成功！你的阅后即焚链接：</p>
+            <a id="link" href="#" target="_blank"></a>
+            <p><small>请注意：此链接仅能访问一次，密钥存储在 # 之后的部分，不会发送到服务器。</small></p>
+        </div>
+
+        <div id="content-area" class="hidden">
+            <h2>解密内容:</h2>
+            <div id="decrypted-content"></div>
+        </div>
+    </div>
+
+    <footer>
+        Powered by Go & Gin | Client-Side Encryption with AES-GCM + HKDF
+        <br>
+        <a href="https://github.com/jacksunhack/biu_email" target="_blank">GitHub Repository</a>
+    </footer>
+
+    <script src="/static/script.js" defer></script>
+</body>
+</html>

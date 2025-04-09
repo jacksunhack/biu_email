@@ -34,16 +34,7 @@ type StoredMetadata struct {
 	OriginalFilename string `json:"originalFilename"` // Original filename from upload
 }
 
-// isValidUUID checks if the provided string is a valid UUID and doesn't contain path traversal characters.
-func isValidUUID(id string) bool {
-	// Basic check for path traversal characters
-	if strings.Contains(id, "..") || strings.Contains(id, "/") || strings.Contains(id, "\\") {
-		return false
-	}
-	// Try parsing as UUID using the imported library
-	_, err := uuid.Parse(id)
-	return err == nil
-}
+// Removed local isValidUUID function, will use IsValidUUID from utils.go
 
 // Note: ensureDataStorageDir function is now defined and called in main.go
 
@@ -123,7 +114,7 @@ func GetDataHandler(config *Config) gin.HandlerFunc { // Accept config
 		}
 		// --- Path Traversal Mitigation ---
 		// 1. Validate ID format
-		if !isValidUUID(id) {
+		if !IsValidUUID(id) { // Use shared function
 			log.Printf("[GetData:%s] Invalid ID format received", id)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
 			return
@@ -226,7 +217,7 @@ func BurnDataHandler(config *Config) gin.HandlerFunc { // Accept config
 			return
 		}
 		// --- Path Traversal Mitigation ---
-		if !isValidUUID(id) {
+		if !IsValidUUID(id) { // Use shared function
 			log.Printf("[BurnData:%s] Invalid ID format received", id)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
 			return
@@ -348,7 +339,7 @@ func StoreMetadataHandler(config *Config) gin.HandlerFunc { // Accept config
 		}
 		// --- Path Traversal Mitigation for ID in metadata ---
 		// Validate the ID format received in the metadata payload
-		if !isValidUUID(metadata.ID) {
+		if !IsValidUUID(metadata.ID) { // Use shared function
 			log.Printf("[StoreMetadata] Invalid ID format received in metadata payload: %s", metadata.ID)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format in payload"})
 			return
@@ -419,7 +410,7 @@ func DownloadHandler(config *Config) gin.HandlerFunc { // Accept config
 			return
 		}
 		// --- Path Traversal Mitigation ---
-		if !isValidUUID(id) {
+		if !IsValidUUID(id) { // Use shared function
 			log.Printf("[Download:%s] Invalid ID format received", id)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
 			return
