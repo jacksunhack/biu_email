@@ -10,7 +10,7 @@ on:
 env:
   REGISTRY: docker.io
   IMAGE_NAME: jacksunhack/biu_email
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.22'
 
 jobs:
   build:
