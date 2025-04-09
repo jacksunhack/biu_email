@@ -43,7 +43,7 @@ jobs:
           go-version: '1.22' # Ensure this matches or is compatible with go.mod
           # Enable caching based on go.sum - helps resolve potential cache corruption
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: go.sum # <<< Ensures cache key is based on dependencies
 
       # 3. Run Go Tests
       - name: Test Go Application
@@ -62,7 +62,8 @@ jobs:
           echo "Building release binary: ${FILENAME}"
           # CGO_ENABLED=0 creates a static binary, GOOS/GOARCH specify the target
           # -ldflags="-s -w" strips debug info and symbols to reduce size
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o ${FILENAME} ./...
+          # Ensure you build the correct main package, '.' might be safer if main is in root
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o ${FILENAME} .
           echo "ASSET_PATH=${FILENAME}" >> $GITHUB_OUTPUT
           echo "ASSET_NAME=${FILENAME}" >> $GITHUB_OUTPUT
 
