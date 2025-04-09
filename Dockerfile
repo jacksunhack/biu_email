@@ -1,57 +1,42 @@
-# Start with a golang base image for building
-FROM golang:1.24.1-alpine AS builder
+# syntax=docker/dockerfile:1
+# Build stage
+FROM golang:1.21-alpine AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Copy go.mod and go.sum files first to leverage Docker cache
-COPY go.mod go.sum* ./
+# Install build dependencies
+RUN apk add --no-cache git
 
-# Download dependencies
+# Copy go mod files
+COPY go.* ./
 RUN go mod download
 
 # Copy source code
 COPY . .
 
-# Build the application as a static binary
-# CGO_ENABLED=0 prevents linking against C libraries (like glibc/musl)
-# GOOS=linux ensures it's built for the Linux kernel (Alpine's kernel)
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o biu_email .
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -o biu_email
 
-# --- Final Stage ---
-# Use a minimal alpine image
-FROM alpine:3.19
+# Final stage
+FROM alpine:latest
 
-# Install ca-certificates for HTTPS support (if needed by the app)
-RUN apk --no-cache add ca-certificates
-
-# Create a non-root user and group
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-
-# Set the working directory
 WORKDIR /app
 
-# Copy the binary and config file from the builder stage
-COPY --from=builder --chown=appuser:appgroup /app/biu_email .
-COPY --from=builder --chown=appuser:appgroup /app/config.yaml .
+# Copy binary from builder
+COPY --from=builder /app/biu_email /app/
+# Copy config example
+COPY config.yaml.example /app/config.yaml
 
-# Create necessary directories for data persistence
-# Note: 'uploads' directory is also needed based on docker-compose.yml and code
-RUN mkdir -p /app/messages /app/temp-files /app/logs /app/storage /app/uploads
+# Create necessary directories
+RUN mkdir -p /app/messages /app/temp-files /app/storage /app/uploads \
+    && chmod -R 750 /app \
+    && adduser -D -H -s /sbin/nologin biu \
+    && chown -R biu:biu /app
 
-# Change ownership of the entire /app directory and its contents to the non-root user
-# This ensures the application running as appuser can write to the necessary subdirectories
-# (messages, temp-files, logs, storage, uploads) which will be mounted as volumes.
-# No need for overly permissive chmod 777. The default permissions combined with correct ownership should suffice.
-RUN chown -R appuser:appgroup /app
+USER biu
 
-# Switch to the non-root user
-USER appuser
-
-# Expose the port the application listens on (defined in config.yaml)
 EXPOSE 3003
 
-# Define the command to run the application with config file
-CMD ["./biu_email", "-config", "/app/config.yaml"]
+ENTRYPOINT ["/app/biu_email"]
 
 
