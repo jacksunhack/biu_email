@@ -509,10 +509,12 @@ func MergeChunks(config *Config, uploadID, fileName string, totalChunks int, exp
 	// 创建 .complete 标记文件
 	completeMarkerPath := filepath.Join(finalDir, ".complete")
 	log.Printf("[%s] MergeChunks: Creating completion marker: %s", uploadID, completeMarkerPath)
-	if _, err := os.Create(completeMarkerPath); err != nil {
+	completeFile, err := os.Create(completeMarkerPath)
+	if err != nil {
 		log.Printf("[%s] MergeChunks: ERROR - Failed to create complete marker file '%s': %v", uploadID, completeMarkerPath, err)
 		// Don't return here, try to create filename marker anyway
 	} else {
+		completeFile.Close() // 显式关闭文件句柄
 		log.Printf("[%s] MergeChunks: Successfully created completion marker.", uploadID)
 	}
 

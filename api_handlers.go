@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-
 	"strings" // Import strings
+	"time"    // Import time
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -133,7 +133,6 @@ func StoreDataHandler(config *Config) gin.HandlerFunc {
 // GetDataHandler handles retrieving stored METADATA (IV, Salt, OriginalFilename) by ID
 // OR retrieving TEXT data (IV, Salt, EncryptedData)
 func GetDataHandler(config *Config) gin.HandlerFunc {
-	// Revised GetDataHandler logic based on biu/ reference and password protection integration
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		if !IsValidUUID(id) {
@@ -158,18 +157,18 @@ func GetDataHandler(config *Config) gin.HandlerFunc {
 			return
 		}
 
-		// log.Printf("[GetData:%s] Raw JSON data read from file: %s", id, string(jsonData))
-
 		// Attempt 1: Parse as StoredData (handles text, potentially password-protected)
 		var textData StoredData
+		var fileMeta StoredMetadata
 		errText := json.Unmarshal(jsonData, &textData)
+		response := gin.H{}
+		// isFileData is no longer needed as backend auto-burn is removed
 
 		if errText == nil {
-			// Successfully parsed as StoredData, now check specifics
+			// Successfully parsed as StoredData
 			if textData.PasswordProtection != nil {
-				// Password protected data (could be text or file, parsed as StoredData)
 				log.Printf("[GetData:%s] 检测到密码保护的数据 (解析为 StoredData)", id)
-				response := gin.H{
+				response = gin.H{
 					"needPassword":       true,
 					"iv":                 textData.IV,
 					"salt":               textData.Salt,
@@ -177,60 +176,125 @@ func GetDataHandler(config *Config) gin.HandlerFunc {
 				}
 				if textData.OriginalFilename != "" {
 					response["originalFilename"] = textData.OriginalFilename
+					// isFileData = true // No longer needed
 				}
 				if textData.EncryptedData != "" {
 					response["encryptedData"] = textData.EncryptedData
 				}
-				c.JSON(http.StatusOK, response)
-				return
 			} else if textData.EncryptedData != "" && textData.OriginalFilename == "" {
-				// Non-password-protected text data
 				log.Printf("[GetData:%s] 返回文本数据 (无密码)", id)
-				c.JSON(http.StatusOK, gin.H{
+				response = gin.H{
 					"iv":            textData.IV,
 					"salt":          textData.Salt,
 					"encryptedData": textData.EncryptedData,
-				})
-				return
-			}
-			// If it parsed as StoredData but doesn't fit above criteria,
-			// it might be file metadata that partially matched. Proceed to Attempt 2.
-			log.Printf("[GetData:%s] Parsed as StoredData but not valid text/password format. Trying StoredMetadata.", id)
-		}
-
-		// Attempt 2: Parse as StoredMetadata (handles files, potentially password-protected)
-		var fileMeta StoredMetadata
-		errFile := json.Unmarshal(jsonData, &fileMeta)
-
-		if errFile == nil && fileMeta.OriginalFilename != "" {
-			// Successfully parsed as StoredMetadata and has an original filename
-			if fileMeta.PasswordProtection != nil {
-				// Password-protected file metadata
-				log.Printf("[GetData:%s] 检测到密码保护的文件元数据", id)
-				c.JSON(http.StatusOK, gin.H{
-					"needPassword":       true,
-					"iv":                 fileMeta.IV,
-					"salt":               fileMeta.Salt,
-					"passwordProtection": fileMeta.PasswordProtection,
-					"originalFilename":   fileMeta.OriginalFilename,
-				})
-				return
+				}
 			} else {
-				// Non-password-protected file metadata
-				log.Printf("[GetData:%s] 返回文件元数据 (无密码)", id)
-				c.JSON(http.StatusOK, gin.H{
-					"iv":               fileMeta.IV,
-					"salt":             fileMeta.Salt,
-					"originalFilename": fileMeta.OriginalFilename,
-				})
-				return
+				// Try parsing as StoredMetadata
+				errFile := json.Unmarshal(jsonData, &fileMeta)
+				if errFile == nil && fileMeta.OriginalFilename != "" {
+					// isFileData = true // No longer needed
+					if fileMeta.PasswordProtection != nil {
+						log.Printf("[GetData:%s] 检测到密码保护的文件元数据", id)
+						response = gin.H{
+							"needPassword":       true,
+							"iv":                 fileMeta.IV,
+							"salt":               fileMeta.Salt,
+							"passwordProtection": fileMeta.PasswordProtection,
+							"originalFilename":   fileMeta.OriginalFilename,
+						}
+					} else {
+						log.Printf("[GetData:%s] 返回文件元数据 (无密码)", id)
+						response = gin.H{
+							"iv":               fileMeta.IV,
+							"salt":             fileMeta.Salt,
+							"originalFilename": fileMeta.OriginalFilename,
+						}
+					}
+				} else {
+					log.Printf("[GetData:%s] 无法确定数据类型或格式无效", id)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "存储的数据格式无效"})
+					return
+				}
 			}
 		}
 
-		// Failure: Neither format matched correctly
-		log.Printf("[GetData:%s] 无法确定数据类型或格式无效. RawData='%s', ParseTextErr=%v, ParseFileErr=%v", id, string(jsonData), errText, errFile)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "存储的数据格式无效"})
+		// 发送响应
+		c.JSON(http.StatusOK, response)
+
+		// 移除后端的自动异步销毁逻辑，销毁操作将由前端在处理完数据后通过 /api/burn/:id 触发
 	}
+}
+
+// burnData 销毁数据文件和相关资源
+func burnData(config *Config, id string) error {
+	log.Printf("[BurnData:%s] Starting burn process.", id) // 新增日志
+	// 删除元数据文件
+	metaFilePath := filepath.Join(config.Paths.DataStorageDir, id+".json")
+	log.Printf("[BurnData:%s] Attempting to remove metadata file: %s", id, metaFilePath) // 新增日志
+	errMeta := os.Remove(metaFilePath)
+	if errMeta != nil && !os.IsNotExist(errMeta) {
+		log.Printf("[BurnData:%s] Failed to remove metadata file: %v", id, errMeta) // 修改日志
+		// 暂时不返回，继续尝试删除其他文件
+	} else if errMeta == nil {
+		log.Printf("[BurnData:%s] Successfully removed metadata file.", id) // 新增日志
+	} else { // err is os.IsNotExist
+		log.Printf("[BurnData:%s] Metadata file did not exist.", id) // 新增日志
+	}
+
+	// 删除上传目录（如果存在），带重试逻辑
+	uploadDir := filepath.Join(config.Paths.FinalUploadDir, id)
+	log.Printf("[BurnData:%s] Attempting to remove upload directory with retries: %s", id, uploadDir) // 新增日志
+	var errUpload error
+	maxRetries := 5               // 增加重试次数
+	retryDelay := 1 * time.Second // 增加重试间隔为 1 秒
+	for i := 0; i < maxRetries; i++ {
+		errUpload = os.RemoveAll(uploadDir)
+		if errUpload == nil || os.IsNotExist(errUpload) {
+			break // 成功删除或目录不存在，跳出循环
+		}
+		log.Printf("[BurnData:%s] Attempt %d/%d: Failed to remove upload directory: %v. Retrying after %v...", id, i+1, maxRetries, errUpload, retryDelay)
+		time.Sleep(retryDelay)
+	}
+
+	if errUpload != nil && !os.IsNotExist(errUpload) {
+		log.Printf("[BurnData:%s] Failed to remove upload directory after %d retries: %v", id, maxRetries, errUpload) // 修改日志
+		// 暂时不返回
+	} else if errUpload == nil {
+		log.Printf("[BurnData:%s] Successfully removed upload directory.", id) // 新增日志
+	} else { // err is os.IsNotExist
+		log.Printf("[BurnData:%s] Upload directory did not exist.", id) // 新增日志
+	}
+
+	// 删除临时文件目录（如果存在）
+	tempDir := filepath.Join(config.Paths.TempChunkDir, id)
+	log.Printf("[BurnData:%s] Attempting to remove temporary directory: %s", id, tempDir) // 新增日志
+	errTemp := os.RemoveAll(tempDir)
+	if errTemp != nil && !os.IsNotExist(errTemp) {
+		log.Printf("[BurnData:%s] Failed to remove temporary directory: %v", id, errTemp) // 修改日志
+		// 暂时不返回
+	} else if errTemp == nil {
+		log.Printf("[BurnData:%s] Successfully removed temporary directory.", id) // 新增日志
+	} else { // err is os.IsNotExist
+		log.Printf("[BurnData:%s] Temporary directory did not exist.", id) // 新增日志
+	}
+
+	return nil
+	// 综合判断最终错误，如果任何一个删除操作失败（且不是 'Not Exist' 错误），则返回第一个遇到的错误
+	if errMeta != nil && !os.IsNotExist(errMeta) {
+		log.Printf("[BurnData:%s] Burn process completed with error (metadata).", id)
+		return fmt.Errorf("failed to remove metadata file: %w", errMeta)
+	}
+	if errUpload != nil && !os.IsNotExist(errUpload) {
+		log.Printf("[BurnData:%s] Burn process completed with error (upload dir).", id)
+		return fmt.Errorf("failed to remove upload directory: %w", errUpload)
+	}
+	if errTemp != nil && !os.IsNotExist(errTemp) {
+		log.Printf("[BurnData:%s] Burn process completed with error (temp dir).", id)
+		return fmt.Errorf("failed to remove temporary directory: %w", errTemp)
+	}
+
+	log.Printf("[BurnData:%s] Burn process completed successfully.", id) // 修改日志
+	return nil                                                           // 添加缺失的 return 语句
 }
 
 // BurnDataHandler handles deleting stored metadata AND the corresponding merged file (if applicable)

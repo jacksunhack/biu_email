@@ -243,13 +243,22 @@ encryptForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     hideMessages();
 
+    console.log("Form submitted. isFileMode:", isFileMode); // 新增日志，确认事件触发
+
     // 获取密码保护设置
-    isPasswordProtected = document.getElementById('enablePassword')?.checked || false;
-    const password = isPasswordProtected ? document.getElementById('accessPassword')?.value : '';
-    
+    const enablePasswordCheckbox = document.getElementById('enablePassword');
+    const accessPasswordInput = document.getElementById('accessPassword');
+    const passwordNote = document.getElementById('passwordNote');
+    const isPasswordProtected = enablePasswordCheckbox?.checked || false;
+    const password = isPasswordProtected ? accessPasswordInput?.value : '';
+
     if (isPasswordProtected && (!password || password.length < 6)) {
         showStatus('访问密码至少需要6个字符', true);
-        return;
+        return; // 停止执行
+    }
+    
+    if (passwordNote) {
+        passwordNote.classList.toggle('hidden', !isPasswordProtected);
     }
 
     setLoading(true);
@@ -261,9 +270,8 @@ encryptForm.addEventListener('submit', async (event) => {
 
         // 如果启用了密码保护，加密主密钥
         let encryptedMasterKey = null;
-        let passwordSalt = null;
         if (isPasswordProtected) {
-            passwordSalt = window.crypto.getRandomValues(new Uint8Array(16));
+            const passwordSalt = window.crypto.getRandomValues(new Uint8Array(16));
             const passwordKey = await deriveKeyFromPassword(password, passwordSalt);
             const { encryptedContent, iv } = await encryptData(
                 new TextEncoder().encode(masterKeyBase64),
@@ -276,81 +284,24 @@ encryptForm.addEventListener('submit', async (event) => {
             };
         }
 
+        // 根据模式调用相应的处理函数
         if (isFileMode) {
-            // --- File Mode: Encrypt then Chunk Upload ---
-            const file = fileInput.files[0];
-            if (!file) {
-                throw new Error("请选择一个文件。");
-            }
-            const maxSizeBytes = maxFileSizeMB * 1024 * 1024;
-            if (file.size > maxSizeBytes) {
-                throw new Error('文件大小超过限制 (' + maxFileSizeMB + ' MB)。');
-            }
-
-            showStatus("正在读取文件...");
-            const dataBuffer = await file.arrayBuffer();
-
-            showStatus("正在加密文件 (这可能需要一些时间)...");
-            // Encrypt the entire file content first
-            const { encryptedContent, iv } = await encryptData(dataBuffer, encryptionKey);
-
-            // Now handle the chunk upload of the encrypted content
-            await handleChunkUpload(file.name, file.size, encryptedContent, iv, salt, masterKeyBase64, encryptedMasterKey);
-
+            console.log("Calling handleFileEncryption..."); // 新增日志
+            await handleFileEncryption(masterKeyBase64, salt, encryptionKey, encryptedMasterKey);
         } else {
-            // --- Text Mode: Use original /api/store ---
-            const message = messageTextarea.value;
-            if (!message.trim()) {
-                throw new Error("请输入文本消息。");
-            }
-            const dataBuffer = new TextEncoder().encode(message);
-            showStatus("正在加密文本...");
-
-            const { encryptedContent, iv } = await encryptData(dataBuffer, encryptionKey);
-
-            const encryptedBase64 = arrayBufferToBase64(encryptedContent);
-            const ivBase64 = arrayBufferToBase64(iv);
-            const saltBase64 = arrayBufferToBase64(salt);
-
-            showStatus("正在将加密数据发送到服务器...");
-
-            const payload = {
-                encryptedData: encryptedBase64, // Send full encrypted data for text
-                iv: ivBase64,
-                salt: saltBase64,
-                passwordProtection: encryptedMasterKey
-            };
-
-            const response = await fetch('/api/store', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ error: '无法解析服务器错误响应' }));
-                throw new Error('服务器错误 (' + response.status + '): ' + (errorData.error || response.statusText));
-            }
-
-            const resultData = await response.json();
-            if (!resultData.id) {
-                throw new Error("服务器未能返回数据 ID。");
-            }
-
-            const dataId = resultData.id;
-            const shareUrl = window.location.origin + window.location.pathname + '?id=' + dataId + '#' + masterKeyBase64;
-            showResult(shareUrl);
+            console.log("Calling handleTextEncryption..."); // 新增日志
+            await handleTextEncryption(masterKeyBase64, salt, encryptionKey, encryptedMasterKey);
         }
 
     } catch (error) {
         console.error("处理过程中出错:", error);
         showStatus('错误: ' + error.message, true);
-    } finally {
-        // setLoading(false); // handleChunkUpload will manage loading state for file uploads
-        if (!isFileMode) { // Only reset loading if it was text mode
-            setLoading(false);
-        }
+        // 确保在任何错误情况下都重置加载状态
+        setLoading(false);
     }
+    // finally 块不再需要，因为 setLoading(false) 在成功路径（handleFile/TextEncryption内部）和错误路径（catch块）中都已处理。
+    // 对于文件上传，setLoading(false) 在 finalizeUpload 成功或失败时调用。
+    // 对于文本上传，setLoading(false) 在 handleTextEncryption 成功或失败时调用。
 });
 
 // --- Chunk Upload Functions ---
@@ -615,7 +566,7 @@ async function handleDecryptionOnLoad() {
         			<p>这是一个加密文件：<strong>${escapeHTML(originalFilename)}</strong></p>
         			<p id="file-status-msg">点击下方按钮开始下载并解密文件。</p>
         			<button id="downloadBtn" class="button">下载并解密文件</button>
-        			<p><small>下载完成后，服务器记录将被删除。</small></p>
+        			<p><small>点击下载后，文件将从服务器永久删除。</small></p>
         		`;
         		const downloadBtn = document.getElementById('downloadBtn');
         		const fileStatusMsg = document.getElementById('file-status-msg');
@@ -878,68 +829,11 @@ function initializePasswordProtection() {
         });
     }
 
-    // 在原始的表单提交事件中添加密码处理
-    const origSubmit = encryptForm.onsubmit;
-    encryptForm.onsubmit = async (event) => {
-        event.preventDefault();
-        hideMessages();
-
-        const isPasswordProtected = enablePasswordCheckbox?.checked || false;
-        const password = isPasswordProtected ? accessPassword?.value : '';
-
-        if (isPasswordProtected && (!password || password.length < 6)) {
-            showStatus('访问密码至少需要6个字符', true);
-            return;
-        }
-
-        if (passwordNote) {
-            passwordNote.classList.toggle('hidden', !isPasswordProtected);
-        }
-
-        // 继续原始的提交处理
-        await handleFormSubmit(event);
-    };
+    // The onsubmit handler and handleFormSubmit function are removed.
+    // Logic will be integrated into the addEventListener callback.
 }
 
-async function handleFormSubmit(event) {
-    const isPasswordEnabled = document.getElementById('enablePassword')?.checked || false;
-    const password = isPasswordEnabled ? document.getElementById('accessPassword')?.value : '';
-    
-    setLoading(true);
-
-    try {
-        const masterKeyBase64 = await generateMasterKey();
-        const salt = window.crypto.getRandomValues(new Uint8Array(16));
-        const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
-
-        // 处理密码保护
-        let encryptedMasterKey = null;
-        if (isPasswordEnabled && password) {
-            const passwordSalt = window.crypto.getRandomValues(new Uint8Array(16));
-            const passwordKey = await deriveKeyFromPassword(password, passwordSalt);
-            const { encryptedContent, iv } = await encryptData(
-                new TextEncoder().encode(masterKeyBase64),
-                passwordKey
-            );
-            encryptedMasterKey = {
-                data: arrayBufferToBase64(encryptedContent),
-                iv: arrayBufferToBase64(iv),
-                salt: arrayBufferToBase64(passwordSalt)
-            };
-        }
-
-        // 继续处理加密和上传
-        if (isFileMode) {
-            await handleFileEncryption(masterKeyBase64, salt, encryptionKey, encryptedMasterKey);
-        } else {
-            await handleTextEncryption(masterKeyBase64, salt, encryptionKey, encryptedMasterKey);
-        }
-    } catch (error) {
-        console.error('处理过程中出错:', error);
-        showStatus('错误: ' + error.message, true);
-        setLoading(false);
-    }
-}
+// handleFormSubmit function removed.
 
 async function handleFileEncryption(masterKeyBase64, salt, encryptionKey, encryptedMasterKey) {
     const file = fileInput.files[0];
