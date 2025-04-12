@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	mathRand "math/rand"
+	"mime"          // Added for MIME type detection
+	"path/filepath" // Added for getting file extension
 	"regexp"
 	"strings"
 	"time"
@@ -45,3 +47,17 @@ func IsValidUploadID(uploadID string) bool {
 }
 
 // 更多工具函数可以根据需要添加在这里...
+
+// GetContentTypeByFilename attempts to determine the MIME type based on the filename extension.
+// It returns "application/octet-stream" if the type cannot be determined.
+func GetContentTypeByFilename(filename string) string {
+	ext := filepath.Ext(filename)
+	// mime.TypeByExtension expects the extension starting with a dot (e.g., ".txt")
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		// Default to octet-stream if MIME type is unknown or extension is missing
+		return "application/octet-stream"
+	}
+	// The mime package might return "type/subtype; charset=utf-8", we only want "type/subtype"
+	return strings.Split(mimeType, ";")[0]
+}

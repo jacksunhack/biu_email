@@ -1,3 +1,54 @@
+/* --- Rounded Corners --- */
+
+/* Inputs and Textareas */
+input[type="text"],
+input[type="password"],
+input[type="file"],
+textarea,
+select { /* Added select for consistency */
+    border-radius: 6px;
+    /* Optionally add border if needed, e.g., border: 1px solid #ccc; */
+}
+
+/* Buttons */
+button,
+.button { /* Target button elements and elements with class 'button' */
+    border-radius: 6px;
+}
+
+/* Containers and Display Boxes */
+.container, /* Main container */
+#result,
+#content-area,
+#decrypted-content,
+#password-prompt, /* Password prompt box */
+#file-preview-area,
+.form-group { /* Grouping elements */
+    border-radius: 6px;
+    /* Note: You might only want border-radius on some of these.
+       Adjust the selector list as needed.
+       Also, some might need 'overflow: hidden;' if content overflows the rounded corners. */
+}
+
+/* Removed commented out EasyMDE styles */
+
+/* Code blocks within rendered content */
+#decrypted-content pre {
+    border-radius: 6px;
+    overflow: hidden; /* Ensure background respects radius */
+}
+#decrypted-content pre code {
+   border-radius: 6px; /* Apply to code element too if needed */
+}
+
+/* Copy button on code blocks */
+.copy-code-button {
+    border-radius: 4px; /* Slightly smaller radius for small button */
+}
+
+/* --- End Rounded Corners --- */
+
+
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 700px; margin: auto; background-color: #f8f9fa; color: #343a40; }
 .container { background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
 h1, h2 { color: #495057; text-align: center; margin-bottom: 1.5rem;}

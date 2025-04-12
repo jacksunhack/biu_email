@@ -2,16 +2,13 @@ package main
 
 import (
 	"encoding/json"
-	"fmt" // Added for fmt.Sprintf
-
-	// "io" // Removed unused import
-	// "io/ioutil" // Replaced with os package functions
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings" // Import strings
-	"time"    // Import time
+	"strings"
+	"time" // Ensure time is imported
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -27,41 +24,109 @@ type PasswordProtection struct {
 	Salt string `json:"salt"`
 }
 
-// StoredData 定义旧的存储在文件中的数据结构 (主要用于文本模式)
+// StoredData 定义存储在文件中的数据结构 (文本或文件元数据)
 type StoredData struct {
-	EncryptedData      string              `json:"encryptedData"`    // Base64 encoded (Only for text mode now)
-	IV                 string              `json:"iv"`               // Base64 encoded
-	Salt               string              `json:"salt"`             // Base64 encoded
-	OriginalFilename   string              `json:"originalFilename"` // Should be empty for text mode
-	PasswordProtection *PasswordProtection `json:"passwordProtection,omitempty"`
+	EncryptedData      string              `json:"encryptedData,omitempty"`      // Base64 encoded (Only for text mode)
+	IV                 string              `json:"iv"`                           // Base64 encoded
+	Salt               string              `json:"salt"`                         // Base64 encoded
+	OriginalFilename   string              `json:"originalFilename,omitempty"`   // Original name of the uploaded file
+	PasswordProtection *PasswordProtection `json:"passwordProtection,omitempty"` // Optional password protection details
+	ExpiresAt          *time.Time          `json:"expiresAt,omitempty"`          // Primary expiration time
+	AccessWindowEndsAt *time.Time          `json:"accessWindowEndsAt,omitempty"` // Access window expiration (set on first access)
+	ContentType        string              `json:"contentType,omitempty"`        // MIME type of the content
+	FileSize           int64               `json:"fileSize,omitempty"`           // Size of the final merged file (for files)
+	FirstAccessedTime  *time.Time          `json:"firstAccessedTime,omitempty"`  // Timestamp of first access (for access window calculation)
 }
 
 // StoredMetadata 定义仅包含元数据的文件结构 (用于文件分片上传后)
-// Added PasswordProtection field to handle password-protected files correctly.
-type StoredMetadata struct {
-	ID                 string              `json:"id"`
+// 注意: 这个结构体现在与 StoredData 合并，因为字段基本重叠。
+// 保留 StoredMetadata 类型别名以兼容旧代码，但内部使用 StoredData。
+type StoredMetadata = StoredData // 使用类型别名
+
+// StoreRequest 扩展请求结构以支持密码保护和有效期设置 (用于 /api/store - 文本模式)
+type StoreRequest struct {
+	EncryptedData      string              `json:"encryptedData"` // Required for text mode
+	IV                 string              `json:"iv"`
+	Salt               string              `json:"salt"`
+	PasswordProtection *PasswordProtection `json:"passwordProtection,omitempty"`
+	SetDuration        string              `json:"setDuration,omitempty"` // User-selected duration (e.g., "1h", "24h")
+	ContentType        string              `json:"contentType,omitempty"` // Optional: Specify content type (e.g., text/markdown, text/x-python). Defaults to text/plain if empty.
+}
+
+// StoreMetadataRequest 定义 /api/store/metadata 的请求结构 (文件模式完成时)
+type StoreMetadataRequest struct {
+	ID                 string              `json:"id"` // Upload ID becomes the data ID
 	IV                 string              `json:"iv"`
 	Salt               string              `json:"salt"`
 	OriginalFilename   string              `json:"originalFilename"`
-	PasswordProtection *PasswordProtection `json:"passwordProtection,omitempty"` // Added this field
-}
-
-// StoreRequest 扩展请求结构以支持密码保护
-type StoreRequest struct {
-	EncryptedData      string              `json:"encryptedData"`
-	IV                 string              `json:"iv"`
-	Salt               string              `json:"salt"`
-	OriginalFilename   string              `json:"originalFilename,omitempty"`
 	PasswordProtection *PasswordProtection `json:"passwordProtection,omitempty"`
+	SetDuration        string              `json:"setDuration,omitempty"` // User-selected duration
+	ContentType        string              `json:"contentType"`           // MIME type detected by client or server
+	FileSize           int64               `json:"fileSize"`              // Size of the final merged file
 }
 
-// Removed local isValidUUID function, will use IsValidUUID from utils.go
+// calculateExpirationTime 根据配置和用户选择计算主有效期时间
+func calculateExpirationTime(config *Config, userDurationStr string) (*time.Time, error) {
+	if !config.Expiration.Enabled {
+		// Expiration disabled, set a very far future time (or return nil if preferred)
+		farFuture := time.Now().AddDate(100, 0, 0) // ~100 years
+		return &farFuture, nil
+	}
 
-// Note: ensureDataStorageDir function is now defined and called in main.go
+	var durationStr string
+	if config.Expiration.Mode == "forced" {
+		durationStr = config.Expiration.DefaultDuration
+	} else if config.Expiration.Mode == "free" {
+		if userDurationStr != "" {
+			// Attempt to parse the user-provided duration directly
+			parsedDuration, err := time.ParseDuration(userDurationStr)
+			if err != nil {
+				log.Printf("Invalid duration format '%s' provided by client: %v. Using default: %s", userDurationStr, err, config.Expiration.DefaultDuration)
+				durationStr = config.Expiration.DefaultDuration
+				// Optionally return an error:
+				// return nil, fmt.Errorf("无效的有效期格式: %s", userDurationStr)
+			} else if parsedDuration <= 0 {
+				log.Printf("Non-positive duration '%s' provided by client. Using default: %s", userDurationStr, config.Expiration.DefaultDuration)
+				durationStr = config.Expiration.DefaultDuration
+				// Optionally return an error:
+				// return nil, fmt.Errorf("有效期必须为正数: %s", userDurationStr)
+			} else {
+				// Optional: Add a maximum duration check if needed
+				// maxAllowedDuration := 365 * 24 * time.Hour // Example: 1 year
+				// if parsedDuration > maxAllowedDuration {
+				// 	log.Printf("Duration '%s' exceeds maximum allowed. Using default: %s", userDurationStr, config.Expiration.DefaultDuration)
+				// 	durationStr = config.Expiration.DefaultDuration
+				//  // Optionally return an error:
+				//  // return nil, fmt.Errorf("有效期超过最大限制")
+				// } else {
+				durationStr = userDurationStr // Use the valid custom duration
+				// }
+			}
+		} else {
+			// If user didn't provide one, use default
+			log.Printf("No duration provided by client. Using default: %s", config.Expiration.DefaultDuration)
+			durationStr = config.Expiration.DefaultDuration
+		}
+	} else {
+		// Should not happen due to config validation, but handle defensively
+		log.Printf("CRITICAL: Invalid expiration mode '%s' found despite validation. Using default duration.", config.Expiration.Mode)
+		durationStr = config.Expiration.DefaultDuration
+	}
 
-// StoreDataHandler handles storing encrypted data sent from the client
-// StoreDataHandler handles storing encrypted TEXT data sent from the client (legacy/text mode)
-// StoreDataHandler handles storing encrypted TEXT data sent from the client (legacy/text mode)
+	duration, err := time.ParseDuration(durationStr)
+	if err != nil {
+		// This should ideally not happen due to config validation, but handle defensively
+		log.Printf("CRITICAL: Failed to parse configured duration '%s': %v. Using default 24h.", durationStr, err)
+		duration = 24 * time.Hour
+		// Return the error if strict handling is needed:
+		// return nil, fmt.Errorf("无法解析有效期 '%s': %w", durationStr, err)
+	}
+
+	expirationTime := time.Now().Add(duration)
+	return &expirationTime, nil
+}
+
+// StoreDataHandler handles storing encrypted TEXT data sent from the client
 func StoreDataHandler(config *Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var request StoreRequest
@@ -71,20 +136,18 @@ func StoreDataHandler(config *Config) gin.HandlerFunc {
 			return
 		}
 
-		// 改进的数据验证
-		if len(request.EncryptedData) == 0 {
+		// Validate required fields for text mode
+		if request.EncryptedData == "" {
 			log.Println("[StoreData] Missing encryptedData")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少加密数据"})
 			return
 		}
-
-		if len(request.IV) == 0 {
+		if request.IV == "" {
 			log.Println("[StoreData] Missing IV")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少IV"})
 			return
 		}
-
-		if len(request.Salt) == 0 {
+		if request.Salt == "" {
 			log.Println("[StoreData] Missing salt")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少salt"})
 			return
@@ -95,12 +158,32 @@ func StoreDataHandler(config *Config) gin.HandlerFunc {
 		fileName := id + ".json"
 		filePath := filepath.Join(config.Paths.DataStorageDir, fileName)
 
+		// --- Expiration Logic ---
+		expirationTimePtr, err := calculateExpirationTime(config, request.SetDuration)
+		if err != nil {
+			// Handle error during duration calculation (e.g., invalid user input if not falling back)
+			log.Printf("[StoreData:%s] Error calculating expiration: %v", id, err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("计算有效期失败: %v", err)})
+			return
+		}
+		log.Printf("[StoreData:%s] Calculated expiration time: %v", id, expirationTimePtr)
+		// --- End Expiration Logic ---
+
 		// 构建存储数据结构
 		data := StoredData{
 			EncryptedData:      request.EncryptedData,
 			IV:                 request.IV,
 			Salt:               request.Salt,
 			PasswordProtection: request.PasswordProtection,
+			ExpiresAt:          expirationTimePtr, // Store calculated expiration time pointer
+			ContentType:        "text/plain",      // Default ContentType for text data
+			// File specific fields (OriginalFilename, FileSize) are empty for text
+			// Access window fields (FirstAccessedTime, AccessWindowEndsAt) are nil initially
+		}
+		// Use ContentType from request if provided
+		if request.ContentType != "" {
+			// Basic validation/sanitization could be added here if needed
+			data.ContentType = request.ContentType
 		}
 
 		// 确保目录存在
@@ -125,161 +208,242 @@ func StoreDataHandler(config *Config) gin.HandlerFunc {
 			return
 		}
 
-		log.Printf("[StoreData:%s] Successfully stored data", id)
+		log.Printf("[StoreData:%s] Successfully stored text data", id)
 		c.JSON(http.StatusOK, gin.H{"id": id})
 	}
 }
 
-// GetDataHandler handles retrieving stored METADATA (IV, Salt, OriginalFilename) by ID
-// OR retrieving TEXT data (IV, Salt, EncryptedData)
+// GetDataHandler handles retrieving stored data (text or file metadata) by ID,
+// applying expiration checks (primary and access window).
 func GetDataHandler(config *Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		if !IsValidUUID(id) {
-			log.Printf("[GetData] 无效的ID格式: %s", id)
+			log.Printf("[GetData:%s] Invalid ID format received.", id)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的数据ID"})
 			return
 		}
 
-		log.Printf("[GetData] 尝试获取数据，ID: %s", id)
 		dataPath := filepath.Join(config.Paths.DataStorageDir, id+".json")
+		log.Printf("[GetData:%s] Attempting to read metadata file: %s", id, dataPath)
 
-		log.Printf("[GetData] 尝试读取文件: %s", dataPath)
 		jsonData, err := os.ReadFile(dataPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				log.Printf("[GetData] 数据文件不存在: %s", dataPath)
+				log.Printf("[GetData:%s] Metadata file not found (likely burned or invalid ID): %s", id, dataPath)
 				c.JSON(http.StatusNotFound, gin.H{"error": "数据不存在或已被销毁"})
-				return
+			} else {
+				log.Printf("[GetData:%s] Error reading metadata file %s: %v", id, dataPath, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "读取数据失败"})
 			}
-			log.Printf("[GetData] 读取数据文件失败: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取数据失败"})
 			return
 		}
 
-		// Attempt 1: Parse as StoredData (handles text, potentially password-protected)
-		var textData StoredData
-		var fileMeta StoredMetadata
-		errText := json.Unmarshal(jsonData, &textData)
-		response := gin.H{}
-		// isFileData is no longer needed as backend auto-burn is removed
+		// Unmarshal into the unified StoredData struct
+		var metadata StoredData
+		if err := json.Unmarshal(jsonData, &metadata); err != nil {
+			log.Printf("[GetData:%s] Error unmarshaling metadata from %s: %v", id, dataPath, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "存储的数据格式无效"})
+			return
+		}
 
-		if errText == nil {
-			// Successfully parsed as StoredData
-			if textData.PasswordProtection != nil {
-				log.Printf("[GetData:%s] 检测到密码保护的数据 (解析为 StoredData)", id)
-				response = gin.H{
-					"needPassword":       true,
-					"iv":                 textData.IV,
-					"salt":               textData.Salt,
-					"passwordProtection": textData.PasswordProtection,
+		now := time.Now()
+		needsUpdate := false // Flag to indicate if metadata file needs to be rewritten
+
+		// --- Primary Expiration Check ---
+		if metadata.ExpiresAt != nil && now.After(*metadata.ExpiresAt) {
+			log.Printf("[GetData:%s] Primary expiration time (%s) has passed. Burning data.", id, (*metadata.ExpiresAt).Format(time.RFC3339))
+			go burnData(config, id) // Burn in background
+			c.JSON(http.StatusNotFound, gin.H{"error": "数据不存在或已被销毁"})
+			return
+		}
+
+		// --- Access Window Logic ---
+		if config.Expiration.Enabled && config.Expiration.AccessWindow.Enabled {
+			if metadata.FirstAccessedTime == nil {
+				// First access: Calculate and set access window expiry
+				log.Printf("[GetData:%s] First access detected. Calculating access window.", id)
+
+				isTextData := metadata.OriginalFilename == "" // Determine if it's text data
+				fileExt := ""
+				if !isTextData {
+					fileExt = strings.ToLower(filepath.Ext(metadata.OriginalFilename))
+					if len(fileExt) > 0 {
+						fileExt = fileExt[1:] // Remove leading dot
+					}
 				}
-				if textData.OriginalFilename != "" {
-					response["originalFilename"] = textData.OriginalFilename
-					// isFileData = true // No longer needed
-				}
-				if textData.EncryptedData != "" {
-					response["encryptedData"] = textData.EncryptedData
-				}
-			} else if textData.EncryptedData != "" && textData.OriginalFilename == "" {
-				log.Printf("[GetData:%s] 返回文本数据 (无密码)", id)
-				response = gin.H{
-					"iv":            textData.IV,
-					"salt":          textData.Salt,
-					"encryptedData": textData.EncryptedData,
-				}
-			} else {
-				// Try parsing as StoredMetadata
-				errFile := json.Unmarshal(jsonData, &fileMeta)
-				if errFile == nil && fileMeta.OriginalFilename != "" {
-					// isFileData = true // No longer needed
-					if fileMeta.PasswordProtection != nil {
-						log.Printf("[GetData:%s] 检测到密码保护的文件元数据", id)
-						response = gin.H{
-							"needPassword":       true,
-							"iv":                 fileMeta.IV,
-							"salt":               fileMeta.Salt,
-							"passwordProtection": fileMeta.PasswordProtection,
-							"originalFilename":   fileMeta.OriginalFilename,
-						}
-					} else {
-						log.Printf("[GetData:%s] 返回文件元数据 (无密码)", id)
-						response = gin.H{
-							"iv":               fileMeta.IV,
-							"salt":             fileMeta.Salt,
-							"originalFilename": fileMeta.OriginalFilename,
+				fileSizeMB := float64(metadata.FileSize) / (1024 * 1024) // FileSize is 0 for text
+				accessWindowDurationStr := config.Expiration.AccessWindow.DefaultDuration
+
+				// Find matching rule
+				for _, rule := range config.Expiration.AccessWindow.Rules {
+					typeMatch := false
+					for _, t := range rule.Type {
+						// Handle wildcard, specific extension match, or 'text' type
+						if t == "*" || (t == "text" && isTextData) || (!isTextData && t == fileExt) {
+							typeMatch = true
+							break
 						}
 					}
-				} else {
-					log.Printf("[GetData:%s] 无法确定数据类型或格式无效", id)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "存储的数据格式无效"})
+					if !typeMatch {
+						continue
+					}
+
+					sizeMatch := true // Assume size matches unless rule specifies otherwise
+					if !isTextData {  // Size rules only apply to files
+						if rule.MinSizeMB > 0 && fileSizeMB < float64(rule.MinSizeMB) {
+							sizeMatch = false
+						}
+						if rule.MaxSizeMB > 0 && fileSizeMB >= float64(rule.MaxSizeMB) {
+							sizeMatch = false
+						}
+					} else if rule.MinSizeMB > 0 || rule.MaxSizeMB > 0 {
+						// If size limits are set on a rule matching 'text', it won't apply
+						sizeMatch = false
+					}
+
+					if sizeMatch {
+						accessWindowDurationStr = rule.Duration
+						log.Printf("[GetData:%s] Matched access window rule: Type=%v, SizeMB=%.2f -> Duration=%s", id, rule.Type, fileSizeMB, rule.Duration)
+						break // Use first matching rule
+					}
+				}
+
+				accessWindowDuration, err := time.ParseDuration(accessWindowDurationStr)
+				if err != nil {
+					log.Printf("[GetData:%s] CRITICAL: Failed to parse access window duration '%s': %v. Using default.", id, accessWindowDurationStr, err)
+					// Attempt to parse default duration as fallback
+					defaultAccessDur, defaultErr := time.ParseDuration(config.Expiration.AccessWindow.DefaultDuration)
+					if defaultErr != nil {
+						log.Printf("[GetData:%s] CRITICAL: Failed to parse DEFAULT access window duration '%s': %v. Using 10m.", id, config.Expiration.AccessWindow.DefaultDuration, defaultErr)
+						defaultAccessDur = 10 * time.Minute // Absolute fallback
+					}
+					accessWindowDuration = defaultAccessDur
+				}
+
+				calculatedAccessWindowEnd := now.Add(accessWindowDuration)
+				finalAccessWindowEnd := calculatedAccessWindowEnd
+				// Ensure access window doesn't exceed primary expiry
+				if metadata.ExpiresAt != nil && metadata.ExpiresAt.Before(calculatedAccessWindowEnd) {
+					finalAccessWindowEnd = *metadata.ExpiresAt
+					log.Printf("[GetData:%s] Access window expiry (%s) capped by primary expiry (%s)", id, calculatedAccessWindowEnd.Format(time.RFC3339), finalAccessWindowEnd.Format(time.RFC3339))
+				}
+
+				// Update metadata in memory
+				metadata.FirstAccessedTime = &now
+				metadata.AccessWindowEndsAt = &finalAccessWindowEnd
+				needsUpdate = true // Mark for rewrite
+
+				log.Printf("[GetData:%s] Access window set. FirstAccess: %s, AccessWindowEndsAt: %s", id, now.Format(time.RFC3339), finalAccessWindowEnd.Format(time.RFC3339))
+
+			} else {
+				// Subsequent access: Check if access window has expired
+				if metadata.AccessWindowEndsAt != nil && now.After(*metadata.AccessWindowEndsAt) {
+					log.Printf("[GetData:%s] Access window expired at %s. Burning data.", id, (*metadata.AccessWindowEndsAt).Format(time.RFC3339))
+					go burnData(config, id) // Burn in background
+					c.JSON(http.StatusNotFound, gin.H{"error": "数据不存在或已被销毁"})
 					return
+				}
+				// Log subsequent access within window (optional)
+				// log.Printf("[GetData:%s] Subsequent access within window. AccessWindowEndsAt: %s", id, (*metadata.AccessWindowEndsAt).Format(time.RFC3339))
+			}
+		}
+
+		// --- Update Metadata File if Necessary ---
+		if needsUpdate {
+			updatedJsonData, marshalErr := json.MarshalIndent(metadata, "", "  ") // Marshal the updated StoredData
+			if marshalErr != nil {
+				log.Printf("[GetData:%s] CRITICAL: Failed to marshal updated metadata for saving: %v", id, marshalErr)
+				// Don't fail the request, but log the error. The access window won't be persisted.
+			} else {
+				writeErr := os.WriteFile(dataPath, updatedJsonData, 0640)
+				if writeErr != nil {
+					log.Printf("[GetData:%s] CRITICAL: Failed to write updated metadata file %s: %v", id, dataPath, writeErr)
+					// Don't fail the request, but log the error.
+				} else {
+					log.Printf("[GetData:%s] Successfully updated metadata file with access times.", id)
 				}
 			}
 		}
 
-		// 发送响应
-		c.JSON(http.StatusOK, response)
+		// --- Prepare and Send Response ---
+		response := gin.H{
+			"iv":          metadata.IV,
+			"salt":        metadata.Salt,
+			"contentType": metadata.ContentType, // Include ContentType
+		}
+		if metadata.PasswordProtection != nil {
+			response["needPassword"] = true
+			response["passwordProtection"] = metadata.PasswordProtection
+		}
 
-		// 移除后端的自动异步销毁逻辑，销毁操作将由前端在处理完数据后通过 /api/burn/:id 触发
+		isTextData := metadata.OriginalFilename == ""
+		if !isTextData { // File data
+			response["originalFilename"] = metadata.OriginalFilename
+			log.Printf("[GetData:%s] Returning metadata for file: %s", id, metadata.OriginalFilename)
+		} else { // Text data
+			response["encryptedData"] = metadata.EncryptedData
+			log.Printf("[GetData:%s] Returning encrypted text data.", id)
+		}
+
+		c.JSON(http.StatusOK, response)
 	}
 }
 
 // burnData 销毁数据文件和相关资源
 func burnData(config *Config, id string) error {
-	log.Printf("[BurnData:%s] Starting burn process.", id) // 新增日志
+	log.Printf("[BurnData:%s] Starting burn process.", id)
 	// 删除元数据文件
 	metaFilePath := filepath.Join(config.Paths.DataStorageDir, id+".json")
-	log.Printf("[BurnData:%s] Attempting to remove metadata file: %s", id, metaFilePath) // 新增日志
+	log.Printf("[BurnData:%s] Attempting to remove metadata file: %s", id, metaFilePath)
 	errMeta := os.Remove(metaFilePath)
 	if errMeta != nil && !os.IsNotExist(errMeta) {
-		log.Printf("[BurnData:%s] Failed to remove metadata file: %v", id, errMeta) // 修改日志
-		// 暂时不返回，继续尝试删除其他文件
+		log.Printf("[BurnData:%s] Failed to remove metadata file: %v", id, errMeta)
+		// Continue to attempt deleting other files
 	} else if errMeta == nil {
-		log.Printf("[BurnData:%s] Successfully removed metadata file.", id) // 新增日志
+		log.Printf("[BurnData:%s] Successfully removed metadata file.", id)
 	} else { // err is os.IsNotExist
-		log.Printf("[BurnData:%s] Metadata file did not exist.", id) // 新增日志
+		log.Printf("[BurnData:%s] Metadata file did not exist.", id)
 	}
 
 	// 删除上传目录（如果存在），带重试逻辑
 	uploadDir := filepath.Join(config.Paths.FinalUploadDir, id)
-	log.Printf("[BurnData:%s] Attempting to remove upload directory with retries: %s", id, uploadDir) // 新增日志
+	log.Printf("[BurnData:%s] Attempting to remove upload directory with retries: %s", id, uploadDir)
 	var errUpload error
-	maxRetries := 5               // 增加重试次数
-	retryDelay := 1 * time.Second // 增加重试间隔为 1 秒
+	maxRetries := 5
+	retryDelay := 1 * time.Second
 	for i := 0; i < maxRetries; i++ {
 		errUpload = os.RemoveAll(uploadDir)
 		if errUpload == nil || os.IsNotExist(errUpload) {
-			break // 成功删除或目录不存在，跳出循环
+			break // Success or directory doesn't exist
 		}
 		log.Printf("[BurnData:%s] Attempt %d/%d: Failed to remove upload directory: %v. Retrying after %v...", id, i+1, maxRetries, errUpload, retryDelay)
 		time.Sleep(retryDelay)
 	}
 
 	if errUpload != nil && !os.IsNotExist(errUpload) {
-		log.Printf("[BurnData:%s] Failed to remove upload directory after %d retries: %v", id, maxRetries, errUpload) // 修改日志
-		// 暂时不返回
+		log.Printf("[BurnData:%s] Failed to remove upload directory after %d retries: %v", id, maxRetries, errUpload)
+		// Continue
 	} else if errUpload == nil {
-		log.Printf("[BurnData:%s] Successfully removed upload directory.", id) // 新增日志
+		log.Printf("[BurnData:%s] Successfully removed upload directory.", id)
 	} else { // err is os.IsNotExist
-		log.Printf("[BurnData:%s] Upload directory did not exist.", id) // 新增日志
+		log.Printf("[BurnData:%s] Upload directory did not exist.", id)
 	}
 
 	// 删除临时文件目录（如果存在）
 	tempDir := filepath.Join(config.Paths.TempChunkDir, id)
-	log.Printf("[BurnData:%s] Attempting to remove temporary directory: %s", id, tempDir) // 新增日志
+	log.Printf("[BurnData:%s] Attempting to remove temporary directory: %s", id, tempDir)
 	errTemp := os.RemoveAll(tempDir)
 	if errTemp != nil && !os.IsNotExist(errTemp) {
-		log.Printf("[BurnData:%s] Failed to remove temporary directory: %v", id, errTemp) // 修改日志
-		// 暂时不返回
+		log.Printf("[BurnData:%s] Failed to remove temporary directory: %v", id, errTemp)
+		// Continue
 	} else if errTemp == nil {
-		log.Printf("[BurnData:%s] Successfully removed temporary directory.", id) // 新增日志
+		log.Printf("[BurnData:%s] Successfully removed temporary directory.", id)
 	} else { // err is os.IsNotExist
-		log.Printf("[BurnData:%s] Temporary directory did not exist.", id) // 新增日志
+		log.Printf("[BurnData:%s] Temporary directory did not exist.", id)
 	}
 
-	return nil
-	// 综合判断最终错误，如果任何一个删除操作失败（且不是 'Not Exist' 错误），则返回第一个遇到的错误
+	// Return the first significant error encountered
 	if errMeta != nil && !os.IsNotExist(errMeta) {
 		log.Printf("[BurnData:%s] Burn process completed with error (metadata).", id)
 		return fmt.Errorf("failed to remove metadata file: %w", errMeta)
@@ -293,292 +457,223 @@ func burnData(config *Config, id string) error {
 		return fmt.Errorf("failed to remove temporary directory: %w", errTemp)
 	}
 
-	log.Printf("[BurnData:%s] Burn process completed successfully.", id) // 修改日志
-	return nil                                                           // 添加缺失的 return 语句
+	log.Printf("[BurnData:%s] Burn process completed successfully.", id)
+	return nil
 }
 
 // BurnDataHandler handles deleting stored metadata AND the corresponding merged file (if applicable)
-// BurnDataHandler handles deleting stored metadata AND the corresponding merged file (if applicable)
-func BurnDataHandler(config *Config) gin.HandlerFunc { // Accept config
-	return func(c *gin.Context) { // Return the actual handler
+func BurnDataHandler(config *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		id := c.Param("id")
-		if id == "" {
-			log.Println("[BurnData] Request missing ID parameter")                         // Add context
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Data ID parameter is required"}) // Clearer message
-			return
-		}
-		// --- Path Traversal Mitigation ---
-		if !IsValidUUID(id) { // Use shared function
+		if !IsValidUUID(id) { // Use shared function and check format first
 			log.Printf("[BurnData:%s] Invalid ID format received", id)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
 			return
 		}
-		cleanID := filepath.Clean(id)
-		if cleanID != id || strings.Contains(cleanID, "..") {
-			log.Printf("[BurnData:%s] Potential path traversal detected after cleaning ID ('%s' -> '%s')", id, id, cleanID)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
-			return
-		}
-		// --- End Mitigation ---
 
-		// Construct file path (again, sanitize ID in production)
-		metaFileName := id + ".json"
-		metaFilePath := filepath.Join(config.Paths.DataStorageDir, metaFileName) // Use config path
+		// Call the burnData function
+		err := burnData(config, id) // Call the actual burning logic
 
-		log.Printf("[BurnData:%s] Attempting to burn data (Metadata: %s)", id, metaFilePath) // Add context and ID
-
-		// 1. Try to read metadata first to get original filename (needed for deleting merged file)
-		var originalFilename string
-		// Use os.ReadFile instead of ioutil.ReadFile
-		jsonData, err := os.ReadFile(metaFilePath)
-		if err == nil {
-			var metadata StoredMetadata
-			if json.Unmarshal(jsonData, &metadata) == nil {
-				originalFilename = metadata.OriginalFilename
-			} else {
-				// Try old format for text data
-				var oldData StoredData
-				if json.Unmarshal(jsonData, &oldData) == nil {
-					originalFilename = oldData.OriginalFilename // Will be empty for text
-				} else {
-					log.Printf("[BurnData:%s] Error unmarshaling metadata file %s, cannot determine original filename.", id, metaFilePath) // Add ID
-					// Proceed to delete metadata file anyway, but cannot delete merged file if it exists.
-				}
-			}
-		} else if !os.IsNotExist(err) {
-			log.Printf("[BurnData:%s] Error reading metadata file %s before delete: %v", id, metaFilePath, err) // Add ID
-			// Proceed to attempt delete anyway.
-		}
-
-		// 2. Attempt to remove the metadata file
-		errMeta := os.Remove(metaFilePath)
-		metaDeleted := false
-		if errMeta == nil {
-			log.Printf("[BurnData:%s] Successfully deleted metadata file: %s", id, metaFilePath) // Add ID
-			metaDeleted = true
-		} else if os.IsNotExist(errMeta) {
-			log.Printf("[BurnData:%s] Metadata file %s already deleted or never existed.", id, metaFilePath) // Add ID
-			metaDeleted = true                                                                               // Consider it deleted if not found
+		if err != nil {
+			// Log the specific error from burnData
+			log.Printf("[BurnData:%s] Burn process failed: %v", id, err)
+			// Return a generic server error to the client
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to burn data completely."})
 		} else {
-			log.Printf("[BurnData:%s] Error deleting metadata file %s: %v", id, metaFilePath, errMeta) // Add ID
-			// Don't return yet, try deleting the merged file if we have the name
-		}
-
-		// 3. Attempt to remove the merged file if originalFilename is known (i.e., it was likely a file upload)
-		mergedFileDeleted := true // Assume deleted if not a file upload or filename unknown
-		var errMerged error       // Declare errMerged outside the if block
-		if originalFilename != "" {
-			mergedFilePath := filepath.Join(config.Paths.FinalUploadDir, id, originalFilename)                // Use config path
-			log.Printf("[BurnData:%s] Attempting to delete merged file directory for %s", id, mergedFilePath) // Add ID
-			errMerged = os.RemoveAll(filepath.Join(config.Paths.FinalUploadDir, id))                          // Assign to the outer errMerged
-			if errMerged == nil {
-				log.Printf("[BurnData:%s] Successfully deleted merged file directory: %s", id, filepath.Join(config.Paths.FinalUploadDir, id)) // Add ID
-				mergedFileDeleted = true
-			} else if os.IsNotExist(errMerged) {
-				log.Printf("[BurnData:%s] Merged file directory %s already deleted or never existed.", id, filepath.Join(config.Paths.FinalUploadDir, id)) // Add ID
-				mergedFileDeleted = true
-			} else {
-				log.Printf("[BurnData:%s] Error deleting merged file directory %s: %v", id, filepath.Join(config.Paths.FinalUploadDir, id), errMerged) // Add ID
-				mergedFileDeleted = false
-			}
-		}
-
-		// 4. Determine final status
-		if metaDeleted && mergedFileDeleted {
+			// Success
+			log.Printf("[BurnData:%s] Data successfully burned via API request.", id)
 			c.JSON(http.StatusOK, gin.H{"message": "Data successfully burned"})
-		} else {
-			// Report error if either deletion failed (and the file wasn't already gone)
-			errorMsg := "Failed to burn data completely."
-			if !metaDeleted {
-				errorMsg += " Metadata deletion failed."
-			}
-			if !mergedFileDeleted && originalFilename != "" {
-				errorMsg += " Merged file deletion failed."
-			}
-			// Provide more details in the error response
-			details := map[string]string{}
-			if !metaDeleted {
-				details["metadata_error"] = fmt.Sprintf("Failed to delete %s: %v", metaFilePath, errMeta)
-			}
-			if !mergedFileDeleted && originalFilename != "" {
-				details["merged_file_error"] = fmt.Sprintf("Failed to delete directory %s: %v", filepath.Join(config.Paths.FinalUploadDir, id), errMerged)
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg, "details": details})
-			return // Return after sending error
 		}
-
-		// If successful, only send JSON once. Removed redundant log/JSON call from original code.
-	} // Close returned handler
+	}
 }
 
 // StoreMetadataHandler handles storing metadata after chunk upload completes
-// StoreMetadataHandler handles storing metadata after chunk upload completes
-func StoreMetadataHandler(config *Config) gin.HandlerFunc { // Accept config
-	return func(c *gin.Context) { // Return the actual handler
-		var metadata StoredMetadata
-		if err := c.ShouldBindJSON(&metadata); err != nil {
-			log.Printf("[StoreMetadata] Error binding JSON: %v", err)                                       // Add context
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format", "details": err.Error()}) // Clearer message
+func StoreMetadataHandler(config *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var requestData StoreMetadataRequest // Use the specific request struct
+		if err := c.ShouldBindJSON(&requestData); err != nil {
+			log.Printf("[StoreMetadata] Error binding JSON: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format", "details": err.Error()})
 			return
 		}
 
 		// Basic validation
-		if metadata.ID == "" || metadata.IV == "" || metadata.Salt == "" || metadata.OriginalFilename == "" {
-			log.Printf("[StoreMetadata:%s] Missing required fields (id, iv, salt, originalFilename)", metadata.ID)                               // Add context and ID if available
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required fields", "fields": []string{"id", "iv", "salt", "originalFilename"}}) // More structured error
+		if requestData.ID == "" || requestData.IV == "" || requestData.Salt == "" || requestData.OriginalFilename == "" || requestData.ContentType == "" {
+			log.Printf("[StoreMetadata:%s] Missing required fields (id, iv, salt, originalFilename, contentType)", requestData.ID)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required fields", "fields": []string{"id", "iv", "salt", "originalFilename", "contentType"}})
 			return
 		}
-		// --- Path Traversal Mitigation for ID in metadata ---
 		// Validate the ID format received in the metadata payload
-		if !IsValidUUID(metadata.ID) { // Use shared function
-			log.Printf("[StoreMetadata] Invalid ID format received in metadata payload: %s", metadata.ID)
+		if !IsValidUUID(requestData.ID) {
+			log.Printf("[StoreMetadata] Invalid ID format received in metadata payload: %s", requestData.ID)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format in payload"})
 			return
 		}
-		cleanID := filepath.Clean(metadata.ID)
-		if cleanID != metadata.ID || strings.Contains(cleanID, "..") {
-			log.Printf("[StoreMetadata:%s] Potential path traversal detected after cleaning ID from payload ('%s' -> '%s')", metadata.ID, metadata.ID, cleanID)
+		// Path traversal check (redundant if IsValidUUID is strict, but good practice)
+		cleanID := filepath.Clean(requestData.ID)
+		if cleanID != requestData.ID || strings.Contains(cleanID, "..") {
+			log.Printf("[StoreMetadata:%s] Potential path traversal detected after cleaning ID from payload ('%s' -> '%s')", requestData.ID, requestData.ID, cleanID)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format in payload"})
 			return
 		}
-		// --- End Mitigation ---
 
 		// Construct metadata file path
-		fileName := metadata.ID + ".json"
-		filePath := filepath.Join(config.Paths.DataStorageDir, fileName) // Use config path
-
-		// log.Printf("Attempting to store metadata for ID: %s to %s", metadata.ID, filePath) // Reduce verbose logging
+		id := requestData.ID // Use ID from request
+		fileName := id + ".json"
+		filePath := filepath.Join(config.Paths.DataStorageDir, fileName)
 
 		// Check if merged file exists before saving metadata (important!)
-		mergedFilePath := filepath.Join(config.Paths.FinalUploadDir, metadata.ID, metadata.OriginalFilename) // Use config path
-		if _, err := os.Stat(mergedFilePath); os.IsNotExist(err) {
-			log.Printf("[StoreMetadata:%s] Error: Merged file %s not found. Cannot store metadata.", metadata.ID, mergedFilePath) // Add ID
-			c.JSON(http.StatusPreconditionFailed, gin.H{"error": "Merged file not found, cannot save metadata."})                 // Use 412 Precondition Failed
+		mergedFilePath := filepath.Join(config.Paths.FinalUploadDir, id, requestData.OriginalFilename)
+		fileInfo, err := os.Stat(mergedFilePath)
+		if os.IsNotExist(err) {
+			log.Printf("[StoreMetadata:%s] Error: Merged file %s not found. Cannot store metadata.", id, mergedFilePath)
+			c.JSON(http.StatusPreconditionFailed, gin.H{"error": "Merged file not found, cannot save metadata."})
 			return
 		} else if err != nil {
-			log.Printf("[StoreMetadata:%s] Error checking merged file %s: %v", metadata.ID, mergedFilePath, err)         // Add ID
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error checking merged file status."}) // More generic internal error
+			log.Printf("[StoreMetadata:%s] Error checking merged file %s: %v", id, mergedFilePath, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error checking merged file status."})
 			return
+		}
+		log.Printf("[StoreMetadata:%s] Merged file found. Size: %d bytes", id, fileInfo.Size())
+
+		// --- Expiration Logic ---
+		expirationTimePtr, err := calculateExpirationTime(config, requestData.SetDuration)
+		if err != nil {
+			log.Printf("[StoreMetadata:%s] Error calculating expiration: %v", id, err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("计算有效期失败: %v", err)})
+			return
+		}
+		log.Printf("[StoreMetadata:%s] Calculated expiration time: %v", id, expirationTimePtr)
+		// --- End Expiration Logic ---
+
+		// Create the metadata struct to store
+		metadata := StoredData{ // Use StoredData struct
+			IV:                 requestData.IV,
+			Salt:               requestData.Salt,
+			OriginalFilename:   requestData.OriginalFilename,
+			PasswordProtection: requestData.PasswordProtection,
+			ExpiresAt:          expirationTimePtr,
+			ContentType:        requestData.ContentType,
+			FileSize:           fileInfo.Size(), // Store the actual file size from stat
+			// AccessWindowEndsAt and FirstAccessedTime are nil initially
 		}
 
 		// Marshal the metadata to JSON
 		jsonData, err := json.MarshalIndent(metadata, "", "  ")
 		if err != nil {
-			log.Printf("[StoreMetadata:%s] Error marshaling metadata: %v", metadata.ID, err)                   // Add ID
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error preparing metadata"}) // More generic internal error
+			log.Printf("[StoreMetadata:%s] Error marshaling metadata: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error preparing metadata"})
 			return
 		}
 
 		// Ensure the directory exists
-		if err := os.MkdirAll(config.Paths.DataStorageDir, 0750); err != nil { // Use config path
-			log.Printf("[StoreMetadata:%s] Error ensuring data storage directory '%s': %v", metadata.ID, config.Paths.DataStorageDir, err) // Add ID
-			// Fail if we can't ensure the directory
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error ensuring storage directory"}) // More generic internal error
+		if err := os.MkdirAll(config.Paths.DataStorageDir, 0750); err != nil {
+			log.Printf("[StoreMetadata:%s] Error ensuring data storage directory '%s': %v", id, config.Paths.DataStorageDir, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error ensuring storage directory"})
 			return
 		}
 
 		// Write the JSON metadata to the file
-		// Use os.WriteFile instead of ioutil.WriteFile
 		if err := os.WriteFile(filePath, jsonData, 0640); err != nil {
-			log.Printf("[StoreMetadata:%s] Error writing metadata file %s: %v", metadata.ID, filePath, err) // Add ID
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error saving metadata"}) // More generic internal error
+			log.Printf("[StoreMetadata:%s] Error writing metadata file %s: %v", id, filePath, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error saving metadata"})
 			return
 		}
 
-		log.Printf("[StoreMetadata:%s] Successfully stored metadata", metadata.ID) // Add context and ID
-		c.JSON(http.StatusOK, gin.H{"message": "Metadata successfully stored", "id": metadata.ID})
-	} // Close returned handler
+		log.Printf("[StoreMetadata:%s] Successfully stored metadata", id)
+		c.JSON(http.StatusOK, gin.H{"message": "Metadata successfully stored", "id": id})
+	}
 }
 
-// DownloadHandler handles downloading the merged encrypted file
-// DownloadHandler handles downloading the merged encrypted file
-func DownloadHandler(config *Config) gin.HandlerFunc { // Accept config
-	return func(c *gin.Context) { // Return the actual handler
+// DownloadHandler handles downloading the merged encrypted file, checking expiration.
+func DownloadHandler(config *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		id := c.Param("id")
-		if id == "" {
-			log.Println("[Download] Request missing ID parameter")                         // Add context
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Data ID parameter is required"}) // Clearer message
-			return
-		}
-		// --- Path Traversal Mitigation ---
-		if !IsValidUUID(id) { // Use shared function
+		if !IsValidUUID(id) {
 			log.Printf("[Download:%s] Invalid ID format received", id)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
 			return
 		}
-		cleanID := filepath.Clean(id)
-		if cleanID != id || strings.Contains(cleanID, "..") {
-			log.Printf("[Download:%s] Potential path traversal detected after cleaning ID ('%s' -> '%s')", id, id, cleanID)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Data ID format"})
-			return
-		}
-		// --- End Mitigation ---
 
-		// 1. Read metadata to get the original filename
+		// 1. Read metadata to get the original filename and check expiration
 		metaFileName := id + ".json"
-		metaFilePath := filepath.Join(config.Paths.DataStorageDir, metaFileName) // Use config path
-		// log.Printf("Download: Attempting to read metadata for ID: %s from %s", id, metaFilePath) // Reduce verbose logging
+		metaFilePath := filepath.Join(config.Paths.DataStorageDir, metaFileName)
 
-		// Use os.ReadFile instead of ioutil.ReadFile
 		jsonData, err := os.ReadFile(metaFilePath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				log.Printf("[Download:%s] Metadata file not found: %s", id, metaFilePath) // Add context and ID
-				c.JSON(http.StatusNotFound, gin.H{"error": "Metadata not found (file may be burned or text-only)"})
+				log.Printf("[Download:%s] Metadata file not found: %s", id, metaFilePath)
+				c.JSON(http.StatusNotFound, gin.H{"error": "数据不存在或已被销毁"})
 			} else {
-				log.Printf("[Download:%s] Error reading metadata file %s: %v", id, metaFilePath, err)            // Add context and ID
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error reading metadata"}) // More generic internal error
+				log.Printf("[Download:%s] Error reading metadata file %s: %v", id, metaFilePath, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "读取元数据失败"})
 			}
 			return
 		}
 
-		var metadata StoredMetadata
+		var metadata StoredData
 		if err := json.Unmarshal(jsonData, &metadata); err != nil {
-			// Could be text data (old format) which doesn't have a separate download file
-			log.Printf("[Download:%s] Error unmarshaling metadata: %v. Assuming text data or invalid state.", id, err)     // Add context and ID
-			c.JSON(http.StatusNotFound, gin.H{"error": "Cannot download: data format indicates text-only or is invalid."}) // Clearer message
+			log.Printf("[Download:%s] Error unmarshaling metadata: %v. Assuming invalid state.", id, err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "数据格式无效或已损坏"})
 			return
 		}
 
+		// --- Expiration Checks ---
+		now := time.Now()
+		// Primary Expiration
+		if metadata.ExpiresAt != nil && now.After(*metadata.ExpiresAt) {
+			log.Printf("[Download:%s] Primary expiration time (%s) has passed. Burning data.", id, (*metadata.ExpiresAt).Format(time.RFC3339))
+			go burnData(config, id) // Burn in background
+			c.JSON(http.StatusNotFound, gin.H{"error": "数据不存在或已被销毁"})
+			return
+		}
+		// Access Window Expiration (check only, don't set on download)
+		if config.Expiration.Enabled && config.Expiration.AccessWindow.Enabled && metadata.AccessWindowEndsAt != nil && now.After(*metadata.AccessWindowEndsAt) {
+			log.Printf("[Download:%s] Access window expired at %s. Burning data.", id, (*metadata.AccessWindowEndsAt).Format(time.RFC3339))
+			go burnData(config, id) // Burn in background
+			c.JSON(http.StatusNotFound, gin.H{"error": "数据不存在或已被销毁"})
+			return
+		}
+		// --- End Expiration Checks ---
+
 		if metadata.OriginalFilename == "" {
-			log.Printf("[Download:%s] Metadata does not contain an original filename. Assuming text data.", id)                 // Add context and ID
-			c.JSON(http.StatusNotFound, gin.H{"error": "Cannot download: no file associated with this ID (likely text data)."}) // Clearer message
+			log.Printf("[Download:%s] Metadata indicates text data, cannot download file.", id)
+			c.JSON(http.StatusNotFound, gin.H{"error": "无法下载：此ID关联的是文本数据"})
 			return
 		}
 
 		// 2. Construct path to the merged file
-		mergedFilePath := filepath.Join(config.Paths.FinalUploadDir, id, metadata.OriginalFilename) // Use config path
-		// log.Printf("Download: Attempting to serve merged file: %s", mergedFilePath) // Reduce verbose logging
+		mergedFilePath := filepath.Join(config.Paths.FinalUploadDir, id, metadata.OriginalFilename)
 
 		// 3. Check if file exists
 		fileInfo, err := os.Stat(mergedFilePath)
 		if os.IsNotExist(err) {
-			log.Printf("[Download:%s] Merged file not found: %s", id, mergedFilePath)                                  // Add context and ID
-			c.JSON(http.StatusNotFound, gin.H{"error": "Cannot download: encrypted file not found (already burned?)"}) // Clearer message
+			log.Printf("[Download:%s] Merged file not found: %s", id, mergedFilePath)
+			// Attempt to burn metadata if file is missing (consistency)
+			go burnData(config, id)
+			c.JSON(http.StatusNotFound, gin.H{"error": "无法下载：加密文件不存在（可能已被销毁）"})
 			return
 		} else if err != nil {
-			log.Printf("[Download:%s] Error stating merged file %s: %v", id, mergedFilePath, err)                    // Add context and ID
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error accessing encrypted file"}) // More generic internal error
+			log.Printf("[Download:%s] Error stating merged file %s: %v", id, mergedFilePath, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "访问加密文件时出错"})
 			return
 		}
 
 		// 4. Stream the file
-		// Set headers for download
 		c.Header("Content-Description", "File Transfer")
 		c.Header("Content-Transfer-Encoding", "binary")
+		// Use ContentType from metadata if available, otherwise octet-stream
+		contentTypeHeader := "application/octet-stream"
+		if metadata.ContentType != "" {
+			contentTypeHeader = metadata.ContentType
+		}
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.enc\"", metadata.OriginalFilename)) // Suggest adding .enc extension
-		c.Header("Content-Type", "application/octet-stream")
+		c.Header("Content-Type", contentTypeHeader)
 		c.Header("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
 
-		// Use ServeFile for efficient streaming
 		c.File(mergedFilePath)
-		log.Printf("[Download:%s] Started streaming file %s", id, mergedFilePath) // Add context and ID
+		log.Printf("[Download:%s] Started streaming file %s", id, mergedFilePath)
 
 		// Note: After c.File(), you cannot reliably write JSON errors if streaming fails midway.
-		// Gin handles logging errors during file serving internally to some extent.
-	} // Close returned handler
+	}
 }
-
-// Removed redundant handleGetData function
-
-// End of file

@@ -30,3 +30,76 @@ logging:
       path: logs/application.log
 
 # Database section removed
+
+expiration:
+  enabled: true             # 是否启用有效期功能 (true/false)
+  mode: "free"              # 模式: "forced" (强制使用默认值) 或 "free" (用户可选)
+  default_duration: "24h"   # 默认有效期 (例如 "1h", "24h", "168h" for 1 week)
+  available_durations:      # 用户可选的有效期列表 (仅在 mode="free" 时有效)
+    - "1h"
+    - "24h"
+    - "72h"  # 3 days
+    - "168h" # 1 week
+
+  # 访问窗口配置 (可选, 用于在主有效期内限制首次访问后的时间)
+  access_window:
+    enabled: false            # 是否启用访问窗口 (true/false)
+    default_duration: "10m" # 默认访问窗口期 (例如 "5m", "1h")
+    rules:                  # 基于文件类型或大小的动态访问窗口规则 (可选)
+      - type: ["jpg", "png", "gif"]
+        duration: "5m"
+      - type: ["mp4", "mov"]
+        min_size_mb: 100
+        duration: "30m"
+      - type: ["txt", "pdf"]
+        max_size_mb: 50
+        duration: "1h"
+      - type: ["zip", "tar"]
+        min_size_mb: 200
+        max_size_mb: 500
+        duration: "2h"
+      - type: ["doc", "docx"]
+        duration: "1h"
+      - type: ["xls", "xlsx"]
+        duration: "1h"
+      - type: ["ppt", "pptx"]
+        duration: "1h"  
+      - type: ["mp3", "wav"]
+        duration: "1h"  
+      - type: ["avi", "mkv"]
+        duration: "1h"
+      - type: ["exe", "bin"]
+        duration: "1h"
+      - type: ["iso"]
+        duration: "1h"
+      - type: ["json", "xml"]
+        duration: "1h"
+      - type: ["csv"]
+        duration: "1h"
+      - type: ["html", "htm"]
+        duration: "1h"
+      - type: ["md"]
+        duration: "1h"
+      - type: ["log"]
+        duration: "1h"
+      - type: ["mp4", "mov"]
+        min_size_mb: 100
+        duration: "30m"
+      - type: ["txt", "pdf"]
+        max_size_mb: 50
+        duration: "1h"
+      - type: ["zip", "tar"]
+        min_size_mb: 200
+        max_size_mb: 500
+        duration: "2h"
+      - type: ["doc", "docx"]
+        duration: "1h"
+      - type: ["xls", "xlsx"]
+        duration: "1h"
+      - type: ["ppt", "pptx"]
+        duration: "1h"
+      - type: ["mp3", "wav"]
+        duration: "1h"
+
+
+

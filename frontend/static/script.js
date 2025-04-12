@@ -1,6 +1,8 @@
 let isFileMode = false;
 let maxFileSizeMB = 15; // Default, will be updated from config
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunk size
+let serverConfig = {}; // To store config fetched from server
+let quillInstance = null; // To store the Quill instance
 
 // --- DOM Elements ---
 const switchTypeButton = document.getElementById('switchType');
@@ -18,6 +20,8 @@ const resultDiv = document.getElementById('result');
 const linkElement = document.getElementById('link');
 const contentAreaDiv = document.getElementById('content-area');
 const decryptedContentDiv = document.getElementById('decrypted-content');
+const expirationSection = document.getElementById('expiration-section');
+const expirationDurationInput = document.getElementById('expirationDuration'); // Renamed variable for clarity
 
 // --- New Global Variables for Password Protection ---
 let isPasswordProtected = false;
@@ -84,13 +88,15 @@ function escapeHTML(str) {
     return div.innerHTML;
 }
 
-
+// Removed old copyToClipboard and fallbackCopyToClipboard functions.
+// Clipboard.js will handle the logic now.
 // Function to guess MIME type based on filename extension
 function getMimeType(filename) {
     const extension = filename.split('.').pop().toLowerCase();
     const mimeTypes = {
         // Common types
         'txt': 'text/plain',
+        'md': 'text/markdown', // Added Markdown
         'html': 'text/html',
         'css': 'text/css',
         'js': 'application/javascript',
@@ -125,7 +131,43 @@ function getMimeType(filename) {
         // Add more as needed
     };
     return mimeTypes[extension] || null; // Return null if not found
-}
+   }
+
+   // --- Config Fetching ---
+   async function fetchAndApplyConfig() {
+       try {
+           const response = await fetch('/config');
+           if (!response.ok) {
+               console.error('Failed to fetch server config:', response.statusText);
+               // Use default maxFileSizeMB if fetch fails
+               return;
+           }
+           serverConfig = await response.json();
+           console.log('Server config loaded:', serverConfig);
+
+           // Apply Max File Size
+           if (serverConfig.maxFileSizeMB) {
+               maxFileSizeMB = serverConfig.maxFileSizeMB;
+               console.log(`Max file size set to ${maxFileSizeMB} MB`);
+           }
+
+           // Apply Expiration settings
+           if (serverConfig.expiration && serverConfig.expiration.enabled) {
+               // Show the expiration input section if expiration is enabled on the server
+               expirationSection.classList.remove('hidden');
+               // Set placeholder based on server default if available
+               if (serverConfig.expiration.default_duration) {
+                   expirationDurationInput.placeholder = `例如: 30m, 1h, 7d (默认: ${serverConfig.expiration.default_duration})`;
+               }
+           } else {
+               // Hide the section if expiration is disabled on the server
+               expirationSection.classList.add('hidden');
+           }
+
+       } catch (error) {
+           console.error('Error fetching or applying server config:', error);
+       }
+   }
 
 // --- Crypto Functions ---
 async function generateMasterKey() {
@@ -159,7 +201,7 @@ async function deriveEncryptionKey(masterKeyBase64, salt) {
 async function encryptData(dataBuffer, encryptionKey) {
     // 生成 12 字节（96位）的 IV，这是 AES-GCM 的推荐值
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
-    
+
     try {
         // 使用 AES-GCM 进行加密
         const encryptedContent = await window.crypto.subtle.encrypt(
@@ -171,16 +213,16 @@ async function encryptData(dataBuffer, encryptionKey) {
             encryptionKey,
             dataBuffer
         );
-        
+
         // 验证加密结果
         if (!(encryptedContent instanceof ArrayBuffer)) {
             throw new Error("加密结果类型错误");
         }
-        
+
         if (encryptedContent.byteLength < dataBuffer.byteLength) {
             throw new Error("加密数据大小异常");
         }
-        
+
         return { encryptedContent, iv };
     } catch (error) {
         console.error("加密失败:", error);
@@ -256,7 +298,7 @@ encryptForm.addEventListener('submit', async (event) => {
         showStatus('访问密码至少需要6个字符', true);
         return; // 停止执行
     }
-    
+
     if (passwordNote) {
         passwordNote.classList.toggle('hidden', !isPasswordProtected);
     }
@@ -305,7 +347,7 @@ encryptForm.addEventListener('submit', async (event) => {
 });
 
 // --- Chunk Upload Functions ---
-async function handleChunkUpload(originalFilename, originalFilesize, encryptedFileBuffer, iv, salt, masterKeyBase64, encryptedMasterKey) {
+async function handleChunkUpload(originalFilename, originalFilesize, contentType, encryptedFileBuffer, iv, salt, masterKeyBase64, encryptedMasterKey) {
     showStatus("正在初始化分片上传...");
 
     // 1. Initialize Upload - 使用加密后的大小
@@ -314,12 +356,12 @@ async function handleChunkUpload(originalFilename, originalFilesize, encryptedFi
         const initResponse = await fetch('/api/upload/init', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                fileName: originalFilename, 
+            body: JSON.stringify({
+                fileName: originalFilename,
                 fileSize: encryptedFileBuffer.byteLength  // 使用加密后的实际大小
             })
         });
-        
+
         if (!initResponse.ok) {
             const errorData = await initResponse.json().catch(() => ({ message: '初始化上传失败' }));
             throw new Error('初始化失败 (' + initResponse.status + '): ' + errorData.message);
@@ -379,10 +421,10 @@ async function handleChunkUpload(originalFilename, originalFilesize, encryptedFi
 
     // 3. Finalize Upload (Polling and Metadata Storage)
     showStatus("所有分片上传完毕，正在等待服务器合并...");
-    await finalizeUpload(uploadId, iv, salt, originalFilename, masterKeyBase64, encryptedMasterKey);
+    await finalizeUpload(uploadId, iv, salt, originalFilename, contentType, encryptedFileBuffer.byteLength, masterKeyBase64, encryptedMasterKey); // Pass contentType and encrypted size
 }
 
-async function finalizeUpload(uploadId, iv, salt, originalFilename, masterKeyBase64, encryptedMasterKey) {
+async function finalizeUpload(uploadId, iv, salt, originalFilename, contentType, fileSize, masterKeyBase64, encryptedMasterKey) {
     const pollInterval = 3000; // Poll every 3 seconds
     let attempts = 0;
     const maxAttempts = 20; // Max 1 minute of polling
@@ -416,11 +458,15 @@ async function finalizeUpload(uploadId, iv, salt, originalFilename, masterKeyBas
                 const ivBase64 = arrayBufferToBase64(iv);
                 const saltBase64 = arrayBufferToBase64(salt);
                 const metadataPayload = {
-                    id: uploadId,
-                    iv: ivBase64,
-                    salt: saltBase64,
-                    originalFilename: originalFilename,
-                    passwordProtection: encryptedMasterKey
+                	id: uploadId,
+                	iv: ivBase64,
+                	salt: saltBase64,
+                	originalFilename: originalFilename,
+                	contentType: contentType, // Include contentType
+                	fileSize: fileSize,       // Include fileSize (encrypted size)
+                	passwordProtection: encryptedMasterKey,
+                	// Add setDuration if expiration section is visible and has a value
+                	...(expirationSection && !expirationSection.classList.contains('hidden') && expirationDurationInput.value.trim() && { setDuration: expirationDurationInput.value.trim() })
                 };
 
                 const metaResponse = await fetch('/api/store/metadata', {
@@ -430,31 +476,38 @@ async function finalizeUpload(uploadId, iv, salt, originalFilename, masterKeyBas
                 });
 
                 if (!metaResponse.ok) {
-                    const errorData = await metaResponse.json().catch(() => ({ error: '存储元数据失败' }));
-                    throw new Error('存储元数据失败 (' + metaResponse.status + '): ' + errorData.error);
+                    const errorData = await metaResponse.json().catch(() => ({ message: '存储元数据失败' }));
+                    throw new Error('存储元数据失败 (' + metaResponse.status + '): ' + errorData.message);
                 }
 
-                console.log("Metadata stored successfully for ID:", uploadId);
-                const shareUrl = window.location.origin + window.location.pathname + '?id=' + uploadId + '#' + masterKeyBase64;
+                const metaResult = await metaResponse.json();
+                console.log("Metadata stored successfully:", metaResult);
+
+                const shareUrl = window.location.origin +
+                    window.location.pathname +
+                    '?id=' + uploadId +
+                    '#' + masterKeyBase64;
+
                 showResult(shareUrl);
-                setLoading(false); // Final success
+                setLoading(false); // Upload complete
 
             } else {
-                // Not completed yet, poll again
-                console.log('Polling attempt ' + attempts + ': Merge not complete yet.');
-                showStatus('正在等待服务器合并... (' + attempts + '/' + maxAttempts + ')');
+                // Still merging, poll again
+                console.log('Polling attempt ' + attempts + ': Merge still in progress.');
                 setTimeout(poll, pollInterval);
             }
+
         } catch (error) {
             showStatus('错误: ' + error.message, true);
-            setLoading(false);
+            setLoading(false); // Stop loading on polling error
         }
     };
 
-    setTimeout(poll, pollInterval); // Start polling
+    // Start polling
+    poll();
 }
 
-// --- Decryption Logic (on page load if URL contains ID and Key) ---
+// --- Decryption on Load ---
 async function handleDecryptionOnLoad() {
     const urlParams = new URLSearchParams(window.location.search);
     const dataId = urlParams.get('id');
@@ -472,11 +525,11 @@ async function handleDecryptionOnLoad() {
     try {
         console.log('Loading data for ID:', dataId);
         const response = await fetch(`/api/data/${dataId}`);
-        
+
         if (response.status === 404) {
             throw new Error('数据不存在或已被销毁');
         }
-        
+
         if (!response.ok) {
             throw new Error(`获取数据失败: ${response.statusText}`);
         }
@@ -504,7 +557,7 @@ async function handleDecryptionOnLoad() {
 
                 console.log('Deriving password key...');
                 const passwordKey = await deriveKeyFromPassword(
-                    passwordInput, 
+                    passwordInput,
                     base64ToArrayBuffer(salt)
                 );
 
@@ -514,10 +567,10 @@ async function handleDecryptionOnLoad() {
                     base64ToArrayBuffer(iv),
                     passwordKey
                 );
-                
+
                 const decryptedMasterKey = new TextDecoder().decode(decryptedMasterKeyBuffer);
                 console.log('Master key decrypted, verifying...');
-                
+
                 if (decryptedMasterKey !== masterKeyBase64) {
                     console.error('Master key verification failed');
                     throw new Error('密码错误');
@@ -555,32 +608,74 @@ async function handleDecryptionOnLoad() {
         		throw new Error(`解码 IV 或 Salt 失败: ${e.message}. 数据可能已损坏或格式不正确。`);
         	}
         	// --- End robust decoding ---
-      
+
         	const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
-      
+
+        	// 确定内容类型
+        	const contentType = responseData.contentType || (responseData.originalFilename ? getMimeType(responseData.originalFilename) : 'text/plain'); // Guess MIME type for files
+
         	if (responseData.originalFilename) {
-        		// --- File Mode ---
-        		const originalFilename = responseData.originalFilename; // Store filename
-        		console.log('File mode detected. Filename:', originalFilename);
+        		// --- 文件模式 ---
+        		const originalFilename = responseData.originalFilename;
+        		const fileId = dataId;
+        		const fileIvBase64 = responseData.iv; // Store IV/Salt for later use
+        		const fileSaltBase64 = responseData.salt;
+        		console.log('文件模式检测到. 文件名:', originalFilename, '类型:', contentType);
+
+        		// 检查是否支持预览
+        		const canPreview = contentType && (
+        			contentType.startsWith('image/') ||
+        			contentType.startsWith('video/') ||
+        			contentType.startsWith('audio/') ||
+        			contentType === 'application/pdf'
+        		);
+
         		decryptedContentDiv.innerHTML = `
         			<p>这是一个加密文件：<strong>${escapeHTML(originalFilename)}</strong></p>
-        			<p id="file-status-msg">点击下方按钮开始下载并解密文件。</p>
-        			<button id="downloadBtn" class="button">下载并解密文件</button>
-        			<p><small>点击下载后，文件将从服务器永久删除。</small></p>
+        			${contentType ? `<p>文件类型: ${contentType}</p>` : ''}
+        			<div id="file-preview-area" class="hidden" style="margin:15px 0; border:1px solid #ddd; padding:10px; max-width:100%; max-height:400px; overflow:auto;"></div>
+        			<p id="file-status-msg">请选择操作方式：</p>
+        			<div class="button-group" style="margin-top:10px;">
+        				${canPreview ? '<button id="previewBtn" class="button secondary">预览文件</button>' : ''}
+        				<button id="downloadBtn" class="button">下载文件</button>
+        			</div>
+        			<p><small>${canPreview ? '预览不会销毁文件。' : ''}下载后文件将从服务器删除。</small></p>
         		`;
         		const downloadBtn = document.getElementById('downloadBtn');
+        		const previewBtn = document.getElementById('previewBtn');
         		const fileStatusMsg = document.getElementById('file-status-msg');
-     
+        		const previewArea = document.getElementById('file-preview-area');
+
+        		// 添加预览按钮事件监听器
+        		if (previewBtn) {
+        			previewBtn.addEventListener('click', async () => {
+        				// 调用之前添加的 handlePreview 函数
+        				await handlePreview(
+        					fileId,             // 文件ID (dataId)
+        					masterKeyBase64,    // 主密钥
+        					contentType,        // 文件类型
+        					originalFilename,   // 原始文件名
+        					fileIvBase64,       // IV (从 responseData 获取)
+        					fileSaltBase64,     // Salt (从 responseData 获取)
+        					previewArea,        // 预览区域元素
+        					fileStatusMsg       // 状态消息元素
+        				);
+        			});
+        		}
+
         		downloadBtn.onclick = async () => {
         			downloadBtn.disabled = true;
+                    if (previewBtn) previewBtn.disabled = true; // Disable preview during download
         			downloadBtn.textContent = '处理中...'; // General processing text
         			fileStatusMsg.textContent = '正在下载加密文件...';
+                    previewArea.classList.add('hidden'); // Hide preview area during download
+                    previewArea.innerHTML = ''; // Clear preview area
         			setLoading(true); // Show loader during download/decrypt
-     
+
         			try {
         				// 1. Fetch encrypted file data
-        				console.log(`Fetching encrypted file from /api/download/${dataId}`);
-        				const fetchResponse = await fetch(`/api/download/${dataId}`);
+        				console.log(`Fetching encrypted file from /api/download/${fileId}`);
+        				const fetchResponse = await fetch(`/api/download/${fileId}`);
         				if (!fetchResponse.ok) {
         					// Try to get error message from server if possible
         					let errorMsg = `下载加密文件失败: ${fetchResponse.statusText}`;
@@ -596,34 +691,34 @@ async function handleDecryptionOnLoad() {
         				console.log('Encrypted file downloaded, size:', encryptedFileBuffer.byteLength);
         				fileStatusMsg.textContent = '文件下载完毕，正在解密...';
         				downloadBtn.textContent = '正在解密...';
-     
+
         				// 2. Prepare decryption parameters (already have responseData, iv, salt, masterKeyBase64 in scope)
-        				// Re-decode IV and Salt robustly
-        				let iv, salt;
-        				try {
-        					if (!responseData.iv || typeof responseData.iv !== 'string' || responseData.iv.length === 0) throw new Error("无效或缺失的 IV 数据");
-        					if (!responseData.salt || typeof responseData.salt !== 'string' || responseData.salt.length === 0) throw new Error("无效或缺失的 Salt 数据");
-        					iv = base64ToArrayBuffer(responseData.iv);
-        					salt = base64ToArrayBuffer(responseData.salt);
-        				} catch (e) { throw new Error(`解码 IV/Salt 失败: ${e.message}`); }
-     
-        				// 3. Derive key
-        				const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
-     
+        				// Re-decode IV and Salt robustly (already decoded above)
+        				// let iv, salt; // Already defined and decoded
+        				// try {
+        				// 	if (!responseData.iv || typeof responseData.iv !== 'string' || responseData.iv.length === 0) throw new Error("无效或缺失的 IV 数据");
+        				// 	if (!responseData.salt || typeof responseData.salt !== 'string' || responseData.salt.length === 0) throw new Error("无效或缺失的 Salt 数据");
+        				// 	iv = base64ToArrayBuffer(responseData.iv);
+        				// 	salt = base64ToArrayBuffer(responseData.salt);
+        				// } catch (e) { throw new Error(`解码 IV/Salt 失败: ${e.message}`); }
+
+        				// 3. Derive key (already derived above)
+        				// const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
+
         				// 4. Validate sizes
         				if (iv.byteLength !== 12) throw new Error("无效的 IV 大小");
         				if (encryptedFileBuffer.byteLength < 16) throw new Error("加密数据过短"); // AES-GCM tag is 16 bytes (128 bits)
-     
+
         				// 5. Decrypt data
-        				console.log('Attempting decryption...');
+        				console.log('Attempting decryption for download...');
         				const decryptedBuffer = await decryptData(encryptedFileBuffer, iv, encryptionKey);
-        				console.log('File decrypted successfully, size:', decryptedBuffer.byteLength);
+        				console.log('File decrypted successfully for download, size:', decryptedBuffer.byteLength);
         				fileStatusMsg.textContent = '解密完成，准备下载...';
-     
+
         				// 6. Create Blob
-        				const mimeType = getMimeType(originalFilename) || 'application/octet-stream';
-        				const blob = new Blob([decryptedBuffer], { type: mimeType });
-     
+        				const blobMimeType = contentType || getMimeType(originalFilename) || 'application/octet-stream'; // Use determined contentType
+        				const blob = new Blob([decryptedBuffer], { type: blobMimeType });
+
         				// 7. Create download link and trigger
         				const objectUrl = URL.createObjectURL(blob);
         				const a = document.createElement('a');
@@ -635,32 +730,33 @@ async function handleDecryptionOnLoad() {
         				console.log('Download triggered for:', originalFilename);
         				fileStatusMsg.textContent = '下载已开始！';
         				downloadBtn.textContent = '下载完成'; // Or hide it
-     
+
         				// 8. Revoke Object URL
         				URL.revokeObjectURL(objectUrl);
-     
+
         				// 9. Send burn request *after* successful decryption and download trigger
         				console.log('Sending burn request for file metadata after successful processing...');
         				try {
-        					await fetch(`/api/burn/${dataId}`, { method: 'POST' });
+        					await fetch(`/api/burn/${fileId}`, { method: 'POST' });
         					console.log('Burn request sent successfully for file metadata.');
         					fileStatusMsg.innerHTML += '<br><small>服务器记录已删除。</small>';
         				} catch (burnError) {
         					console.error('Burn request failed for file:', burnError);
         					fileStatusMsg.innerHTML += '<br><small style="color: orange;">警告：无法从服务器删除此文件记录。</small>';
         				}
-     
+
         			} catch (error) {
         				console.error("File download/decryption failed:", error);
         				fileStatusMsg.innerHTML = `<span style="color: red;">处理文件时出错: ${error.message}</span>`;
         				downloadBtn.textContent = '处理失败';
         				downloadBtn.disabled = false; // Re-enable button on error
+                        if (previewBtn) previewBtn.disabled = false; // Re-enable preview button on error
         			} finally {
         				setLoading(false); // Hide loader
         			}
         		};
         		setLoading(false); // Initial loading state after getting metadata
-     
+
         	} else {
         		// --- Text Mode ---
         		console.log('Text mode detected.');
@@ -680,7 +776,7 @@ async function handleDecryptionOnLoad() {
         			throw new Error(`解码加密文本失败: ${e.message}. 数据可能已损坏或格式不正确。`);
         		}
         		// --- End robust check ---
-      
+
         		// Validate IV size (important for AES-GCM)
         		if (iv.byteLength !== 12) {
         			throw new Error("无效的加密参数 (IV size)");
@@ -689,14 +785,71 @@ async function handleDecryptionOnLoad() {
         		if (encryptedBuffer.byteLength < 16) { // 128-bit tag = 16 bytes
         			throw new Error("加密数据无效或已损坏 (too short)");
         		}
-      
+
         		try {
         			const decryptedBuffer = await decryptData(encryptedBuffer, iv, encryptionKey);
         			const decryptedText = new TextDecoder().decode(decryptedBuffer);
-        			// Use textContent for security against XSS if the text might contain HTML
-        			decryptedContentDiv.textContent = decryptedText;
-        			setLoading(false);
-      
+
+                    // --- Render HTML directly (assuming Quill provides HTML) ---
+                    console.log('Rendering content as HTML...');
+                    // Sanitize potentially harmful HTML before rendering
+                    // Allow pre and code tags, and common attributes like class for highlighting
+                    const cleanHtml = DOMPurify.sanitize(decryptedText, {
+                        USE_PROFILES: { html: true }, // Use default HTML profile
+                        ADD_TAGS: ['pre'], // Ensure pre is allowed if not default
+                        ADD_ATTR: ['class'] // Allow class attribute for hljs
+                    });
+                    decryptedContentDiv.innerHTML = cleanHtml;
+
+                    // Apply syntax highlighting to Quill's code blocks
+                    // Quill typically uses <pre class="ql-syntax" spellcheck="false">...</pre>
+                    decryptedContentDiv.querySelectorAll('pre.ql-syntax, pre code').forEach((block) => { // Target Quill's class and standard pre>code
+                        // If it's a pre element directly, highlight it. If it's a code inside pre, highlight code.
+                        const targetElement = block.tagName === 'PRE' ? block : block;
+                        console.log('Highlighting block:', targetElement);
+                        try {
+                            hljs.highlightElement(targetElement);
+                        } catch(e) {
+                            console.error("Highlight.js error:", e, "on element:", targetElement);
+                        }
+
+                        // Add copy button to the <pre> element
+                        const preElement = block.tagName === 'PRE' ? block : block.parentNode;
+                        if (preElement.tagName !== 'PRE' || preElement.querySelector('.copy-code-button')) {
+                             // Skip if not a PRE or if button already exists (e.g., nested code)
+                             return;
+                        }
+
+                        const copyButton = document.createElement('button');
+                        copyButton.textContent = '复制';
+                        copyButton.className = 'copy-code-button button secondary small';
+                        copyButton.style.position = 'absolute';
+                        copyButton.style.top = '5px';
+                        copyButton.style.right = '5px';
+                        copyButton.style.opacity = '0.7';
+                        copyButton.style.zIndex = '1'; // Ensure button is clickable
+
+                        // Get text content directly from the <pre> element for the data attribute
+                        const codeToCopy = preElement.textContent || '';
+                        if (codeToCopy) {
+                             copyButton.setAttribute('data-clipboard-text', codeToCopy);
+                             console.log('Set data-clipboard-text for button.');
+                        } else {
+                             console.error('Could not extract code to set data-clipboard-text.');
+                             copyButton.disabled = true; // Disable button if no text
+                             copyButton.textContent = '错误';
+                        }
+
+                        // Remove the old onclick handler assignment
+                        // copyButton.onclick = ... (Removed)
+
+                        preElement.style.position = 'relative'; // Needed for absolute positioning
+                        preElement.appendChild(copyButton); // Append button to pre
+                    });
+                    // --- End rendering logic ---
+
+                    setLoading(false);
+
         			// Send burn request for text data
         			console.log('Sending burn request for text...');
         			try {
@@ -723,176 +876,195 @@ async function handleDecryptionOnLoad() {
     }
 }
 
+// --- Password Protection Functions ---
 function showPasswordPrompt(dataId) {
-    decryptedContentDiv.innerHTML = `
-        <div class="password-prompt">
-            <h3>此内容受密码保护</h3>
-            <div class="form-group">
-                <input type="password" id="contentPassword" placeholder="请输入访问密码" class="form-control">
-                <button onclick="submitPassword('${dataId}')" class="btn btn-primary">解锁内容</button>
-            </div>
-        </div>
+    const promptDiv = document.createElement('div');
+    promptDiv.id = 'password-prompt';
+    promptDiv.innerHTML = `
+        <h3>需要密码</h3>
+        <p>此内容受密码保护。请输入密码以继续：</p>
+        <input type="password" id="password-input-field" placeholder="输入访问密码" required>
+        <button id="password-submit-btn" class="button">提交</button>
+        <p id="password-error" class="error-message hidden"></p>
     `;
+    decryptedContentDiv.innerHTML = ''; // Clear previous content
+    decryptedContentDiv.appendChild(promptDiv);
+
+    const inputField = document.getElementById('password-input-field');
+    const submitButton = document.getElementById('password-submit-btn');
+    const errorP = document.getElementById('password-error');
+
+    submitButton.onclick = () => {
+        const enteredPassword = inputField.value;
+        if (!enteredPassword) {
+            errorP.textContent = '请输入密码';
+            errorP.classList.remove('hidden');
+            return;
+        }
+        passwordInput = enteredPassword; // Store password globally for this attempt
+        handleDecryptionOnLoad(); // Re-run decryption logic with the password
+    };
+
+    inputField.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            submitButton.click();
+        }
+    });
 }
 
-// 更新提交密码的函数
 async function submitPassword(id) {
-    const input = document.getElementById('contentPassword');
-    if (!input || !input.value) {
-        showStatus('请输入密码', true);
+    const passwordField = document.getElementById('password-input-field');
+    const password = passwordField.value;
+    if (!password) {
+        document.getElementById('password-error').textContent = '请输入密码';
+        document.getElementById('password-error').classList.remove('hidden');
         return;
     }
-
-    try {
-        setLoading(true);
-        console.log('Password submitted, processing...');
-        passwordInput = input.value;
-        await handleDecryptionOnLoad();
-    } catch (error) {
-        console.error('Password submission failed:', error);
-        showStatus('验证密码时出错: ' + error.message, true);
-        setLoading(false);
-        passwordInput = null; // 重置密码以便重试
-    }
+    passwordInput = password; // Store password globally
+    handleDecryptionOnLoad(); // Re-run decryption logic
 }
 
-// 添加密码处理相关的函数
+// Derive key from password using PBKDF2
 async function deriveKeyFromPassword(password, salt) {
-    console.log('Deriving key from password...');
     const encoder = new TextEncoder();
     const passwordBuffer = encoder.encode(password);
-    
-    const keyMaterial = await window.crypto.subtle.importKey(
+
+    // Import the password material into a CryptoKey
+    const baseKey = await window.crypto.subtle.importKey(
         "raw",
         passwordBuffer,
         { name: "PBKDF2" },
-        false,
-        ["deriveBits", "deriveKey"]
+        false, // Not extractable
+        ["deriveKey"]
     );
-    
-    return window.crypto.subtle.deriveKey(
+
+    // Derive the key using PBKDF2
+    const derivedKey = await window.crypto.subtle.deriveKey(
         {
             name: "PBKDF2",
             salt: salt,
-            iterations: 100000,
+            iterations: 100000, // Recommended minimum iterations
             hash: "SHA-256"
         },
-        keyMaterial,
-        { name: "AES-GCM", length: 256 },
-        true,
-        ["encrypt", "decrypt"]
+        baseKey,
+        { name: "AES-GCM", length: 256 }, // Key type for AES-GCM
+        true, // Allow export (needed for decryption)
+        ["encrypt", "decrypt"] // Key usages
     );
+
+    return derivedKey;
 }
 
-// --- Initial Setup ---
-document.addEventListener('DOMContentLoaded', async () => {
-    console.log("DOM fully loaded.");
-    
-    try {
-        const configResponse = await fetch('/config');
-        if (configResponse.ok) {
-            const configData = await configResponse.json();
-            if (configData.maxFileSizeMB) {
-                maxFileSizeMB = parseInt(configData.maxFileSizeMB, 10);
-                console.log('Max file size loaded from config:', maxFileSizeMB, 'MB');
-            }
-        }
-    } catch (error) {
-        console.error('Error fetching config:', error);
-        showStatus('无法加载服务器配置: ' + error.message, true);
-    }
-
-    // 初始化密码保护功能
-    initializePasswordProtection();
-
-    // 处理解密逻辑
-    if (window.location.search.includes('id=')) {
-        handleDecryptionOnLoad();
-    }
-});
-
+// Function to initialize password protection checkbox logic
 function initializePasswordProtection() {
+    console.log("Initializing password protection logic..."); // Log start
     const enablePasswordCheckbox = document.getElementById('enablePassword');
     const passwordInputGroup = document.getElementById('passwordInputGroup');
-    const accessPassword = document.getElementById('accessPassword');
+    const accessPasswordInput = document.getElementById('accessPassword');
     const passwordNote = document.getElementById('passwordNote');
 
-    if (enablePasswordCheckbox && passwordInputGroup) {
-        enablePasswordCheckbox.addEventListener('change', (e) => {
-            passwordInputGroup.style.display = e.target.checked ? 'block' : 'none';
-            if (!e.target.checked && accessPassword) {
-                accessPassword.value = '';
-                if (passwordNote) {
-                    passwordNote.classList.add('hidden');
-                }
+    // Log whether each element was found
+    console.log("enablePasswordCheckbox found:", !!enablePasswordCheckbox);
+    console.log("passwordInputGroup found:", !!passwordInputGroup);
+    console.log("accessPasswordInput found:", !!accessPasswordInput);
+    console.log("passwordNote found:", !!passwordNote);
+
+    if (enablePasswordCheckbox && passwordInputGroup && accessPasswordInput && passwordNote) {
+        console.log("All password elements found. Adding event listener."); // Log if condition passes
+        enablePasswordCheckbox.addEventListener('change', () => {
+            console.log("Password checkbox 'change' event triggered."); // Log event trigger
+            const isChecked = enablePasswordCheckbox.checked;
+            console.log("Checkbox is checked:", isChecked); // Log checkbox state
+            passwordInputGroup.classList.toggle('hidden', !isChecked);
+            passwordNote.classList.toggle('hidden', !isChecked);
+            console.log("Toggled 'hidden' class on passwordInputGroup and passwordNote."); // Log class toggle
+            if (!isChecked) {
+                accessPasswordInput.value = ''; // Clear password if disabled
             }
         });
+    } else {
+        console.warn("One or more password protection elements not found in the DOM. Event listener NOT added."); // More specific warning
     }
-
-    // The onsubmit handler and handleFormSubmit function are removed.
-    // Logic will be integrated into the addEventListener callback.
 }
+// --- Encryption and Upload Logic ---
 
-// handleFormSubmit function removed.
-
+// Handle File Encryption and Start Upload
 async function handleFileEncryption(masterKeyBase64, salt, encryptionKey, encryptedMasterKey) {
     const file = fileInput.files[0];
     if (!file) {
-        throw new Error("请选择一个文件。");
+        showStatus('请选择一个文件', true);
+        setLoading(false);
+        return;
     }
 
-    const maxSizeBytes = maxFileSizeMB * 1024 * 1024;
-    if (file.size > maxSizeBytes) {
-        throw new Error(`文件大小超过限制 (${maxFileSizeMB} MB)`);
-    }
+    showStatus('正在读取文件...');
+    const reader = new FileReader();
 
-    showStatus("正在读取并加密文件...");
-    const dataBuffer = await file.arrayBuffer();
+    reader.onload = async (e) => {
+        try {
+            showStatus('正在加密文件...');
+            const fileBuffer = e.target.result;
+            const { encryptedContent, iv } = await encryptData(fileBuffer, encryptionKey);
 
-    // 记录原始文件大小用于验证
-    const originalSize = dataBuffer.byteLength;
+            showStatus('文件加密完成，准备上传...');
+            // Determine content type
+            const contentType = getMimeType(file.name) || 'application/octet-stream'; // Default if unknown
+            console.log(`Determined Content-Type: ${contentType}`);
+         
+            // Pass original filename, size, contentType along with encrypted data
+            await handleChunkUpload(file.name, file.size, contentType, encryptedContent, iv, salt, masterKeyBase64, encryptedMasterKey);
+            // setLoading(false) is handled within handleChunkUpload/finalizeUpload
 
-    // 加密文件内容
-    showStatus("正在加密文件...");
-    const { encryptedContent, iv } = await encryptData(dataBuffer, encryptionKey);
+        } catch (error) {
+            console.error("文件加密或上传准备失败:", error);
+            showStatus('错误: ' + error.message, true);
+            setLoading(false); // Ensure loading is stopped on error
+        }
+    };
 
-    // 验证加密后的大小是否合理（考虑AES-GCM的填充）
-    const expectedOverhead = 16; // AES-GCM tag size
-    if (Math.abs(encryptedContent.byteLength - (originalSize + expectedOverhead)) > 32) {
-        throw new Error("加密后文件大小异常，请重试");
-    }
+    reader.onerror = () => {
+        showStatus('读取文件失败', true);
+        setLoading(false);
+    };
 
-    // 传递实际的加密后大小而不是原始大小
-    await handleChunkUpload(file.name, encryptedContent.byteLength, encryptedContent, iv, salt, masterKeyBase64, encryptedMasterKey);
+    reader.readAsArrayBuffer(file);
 }
 
+// Handle Text Encryption and Upload
 async function handleTextEncryption(masterKeyBase64, salt, encryptionKey, encryptedMasterKey) {
-    const message = messageTextarea.value;
-    if (!message.trim()) {
-        throw new Error("请输入文本消息。");
+    // Get content from Quill instance (as HTML)
+    const messageHtml = quillInstance ? quillInstance.root.innerHTML : '';
+    // Basic check if editor is empty (Quill might insert <p><br></p> for empty)
+    const isEmpty = !quillInstance || quillInstance.getLength() <= 1;
+    const message = isEmpty ? '' : messageHtml; // Use HTML content
+    if (!message) {
+        showStatus('请输入文本内容', true);
+        setLoading(false);
+        return;
     }
 
-    showStatus("正在加密文本...");
-    const dataBuffer = new TextEncoder().encode(message);
-    
+    showStatus('正在加密文本...');
     try {
-        const { encryptedContent, iv } = await encryptData(dataBuffer, encryptionKey);
-        
-        // 验证加密数据的完整性
-        if (encryptedContent.byteLength < 16) { // 至少应该包含认证标签
-            throw new Error("加密数据无效");
-        }
-        
-        const encryptedBase64 = arrayBufferToBase64(encryptedContent);
+        const messageBuffer = new TextEncoder().encode(message);
+        const { encryptedContent, iv } = await encryptData(messageBuffer, encryptionKey);
+
+        showStatus('加密完成，正在保存...');
+
         const ivBase64 = arrayBufferToBase64(iv);
         const saltBase64 = arrayBufferToBase64(salt);
+        const encryptedDataBase64 = arrayBufferToBase64(encryptedContent);
 
-        showStatus("正在将加密数据发送到服务器...");
+        const textFormatSelect = document.getElementById('textFormat'); // Get the select element
+        const selectedContentType = textFormatSelect ? textFormatSelect.value : 'text/plain'; // Get selected value or default
+      
         const payload = {
-            encryptedData: encryptedBase64,
-            iv: ivBase64,
-            salt: saltBase64,
-            passwordProtection: encryptedMasterKey
+        	encryptedData: encryptedDataBase64,
+        	iv: ivBase64,
+        	salt: saltBase64,
+        	contentType: selectedContentType, // Add the selected content type
+        	passwordProtection: encryptedMasterKey,
+        	// Add setDuration if expiration section is visible and has a value
+        	...(expirationSection && !expirationSection.classList.contains('hidden') && expirationDurationInput.value.trim() && { setDuration: expirationDurationInput.value.trim() })
         };
 
         const response = await fetch('/api/store', {
@@ -904,7 +1076,7 @@ async function handleTextEncryption(masterKeyBase64, salt, encryptionKey, encryp
         if (!response.ok) {
             const errorData = await response.json()
                 .catch(() => ({ error: '无法解析服务器错误响应' }));
-            throw new Error('服务器错误 (' + response.status + '): ' + 
+            throw new Error('服务器错误 (' + response.status + '): ' +
                 (errorData.error || response.statusText));
         }
 
@@ -913,11 +1085,11 @@ async function handleTextEncryption(masterKeyBase64, salt, encryptionKey, encryp
             throw new Error("服务器未返回数据 ID");
         }
 
-        const shareUrl = window.location.origin + 
-            window.location.pathname + 
-            '?id=' + resultData.id + 
+        const shareUrl = window.location.origin +
+            window.location.pathname +
+            '?id=' + resultData.id +
             '#' + masterKeyBase64;
-            
+
         showResult(shareUrl);
         setLoading(false);
     } catch (error) {
@@ -926,3 +1098,208 @@ async function handleTextEncryption(masterKeyBase64, salt, encryptionKey, encryp
         setLoading(false);
     }
 }
+// 文件预览处理函数
+async function handlePreview(fileId, masterKeyBase64, contentType, filename, ivBase64, saltBase64, previewArea, statusMsg) {
+    try {
+        previewArea.innerHTML = '正在准备预览...';
+        previewArea.classList.remove('hidden');
+        setLoading(true);
+
+        // 获取加密数据
+        console.log(`Fetching preview data for ${fileId}`);
+        const response = await fetch(`/api/download/${fileId}`, {
+            headers: { 'Accept': contentType }
+        });
+        if (!response.ok) {
+            throw new Error(`获取预览数据失败: ${response.statusText}`);
+        }
+        const encryptedData = await response.arrayBuffer();
+
+        // 解密数据
+        const iv = base64ToArrayBuffer(ivBase64);
+        const salt = base64ToArrayBuffer(saltBase64);
+        const encryptionKey = await deriveEncryptionKey(masterKeyBase64, salt);
+        const decryptedData = await decryptData(encryptedData, iv, encryptionKey);
+
+        // 根据文件类型创建预览
+        if (contentType.startsWith('image/')) {
+            const blob = new Blob([decryptedData], { type: contentType });
+            const url = URL.createObjectURL(blob);
+            previewArea.innerHTML = `<img src="${url}" style="max-width:100%; max-height:400px;">`;
+        } else if (contentType.startsWith('video/')) {
+            const blob = new Blob([decryptedData], { type: contentType });
+            const url = URL.createObjectURL(blob);
+            previewArea.innerHTML = `
+                <video controls style="max-width:100%; max-height:400px;">
+                    <source src="${url}" type="${contentType}">
+                    您的浏览器不支持视频预览
+                </video>
+            `;
+        } else if (contentType.startsWith('audio/')) {
+            const blob = new Blob([decryptedData], { type: contentType });
+            const url = URL.createObjectURL(blob);
+            previewArea.innerHTML = `
+                <audio controls style="width:100%">
+                    <source src="${url}" type="${contentType}">
+                    您的浏览器不支持音频预览
+                </audio>
+            `;
+        } else if (contentType === 'application/pdf') {
+            const blob = new Blob([decryptedData], { type: contentType });
+            const url = URL.createObjectURL(blob);
+            previewArea.innerHTML = `<iframe src="${url}" style="width:100%; height:400px; border:none;"></iframe>`;
+        } else {
+            previewArea.innerHTML = '不支持预览此文件类型';
+        }
+
+        statusMsg.textContent = '预览加载完成';
+    } catch (error) {
+        console.error('预览失败:', error);
+        previewArea.innerHTML = `<span style="color:red">预览失败: ${error.message}</span>`;
+    } finally {
+        setLoading(false);
+    }
+}
+
+// --- Initialization ---
+document.addEventListener('DOMContentLoaded', () => {
+    fetchAndApplyConfig(); // Fetch config on page load
+    handleDecryptionOnLoad(); // Check if URL has ID and key
+    initializePasswordProtection(); // Setup password checkbox listener
+
+    // Initialize Quill on the editor container
+    const editorContainer = document.getElementById('editor-container');
+    if (editorContainer) {
+        console.log("Found #editor-container div. Attempting to initialize Quill...");
+        try {
+            // Define Quill toolbar options
+            const toolbarOptions = [
+                [{ 'header': [1, 2, 3, false] }],
+                ['bold', 'italic', 'underline', 'strike'],        // toggled buttons
+                ['blockquote', 'code-block'],
+
+                [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                [{ 'script': 'sub'}, { 'script': 'super' }],      // superscript/subscript
+                [{ 'indent': '-1'}, { 'indent': '+1' }],          // outdent/indent
+
+                [{ 'color': [] }, { 'background': [] }],          // dropdown with defaults from theme
+                [{ 'font': [] }],
+                [{ 'align': [] }],
+
+                ['link', 'image'], // Link and image buttons
+
+                ['clean']                                         // remove formatting button
+            ];
+
+            quillInstance = new Quill('#editor-container', {
+                modules: {
+                    toolbar: toolbarOptions,
+                     syntax: true // Enable syntax highlighting module if using quilljs-syntax
+                },
+                theme: 'snow', // Use 'snow' theme (includes toolbar)
+                placeholder: '在此输入你的秘密消息...'
+            }); // End of new Quill() options
+            console.log("Quill initialized successfully."); // More specific log
+
+             // Check for core Quill elements and log dimensions after a short delay
+             setTimeout(() => {
+                 // Quill usually inserts the toolbar *before* the editor container div
+                 const quillToolbar = editorContainer.previousElementSibling; // Check previous sibling
+                 const quillEditorArea = editorContainer.querySelector('.ql-editor'); // Editor area is inside
+
+                 if (quillToolbar && quillToolbar.classList.contains('ql-toolbar')) {
+                     console.log("Quill toolbar (.ql-toolbar) found (as previous sibling). OffsetHeight:", quillToolbar.offsetHeight, "OffsetWidth:", quillToolbar.offsetWidth);
+                 } else {
+                      // Fallback: Check parent's children just in case structure differs slightly
+                      const parentToolbar = editorContainer.parentNode.querySelector('.ql-toolbar');
+                      if(parentToolbar) {
+                           console.log("Quill toolbar (.ql-toolbar) found (within parent). OffsetHeight:", parentToolbar.offsetHeight, "OffsetWidth:", parentToolbar.offsetWidth);
+                      } else {
+                           console.error("Quill toolbar (.ql-toolbar) NOT found near #editor-container.");
+                      }
+                 }
+
+                 if (quillEditorArea) {
+                     console.log("Quill editor area (.ql-editor) found. OffsetHeight:", quillEditorArea.offsetHeight, "OffsetWidth:", quillEditorArea.offsetWidth);
+                     console.log("Quill editor area innerHTML (sample):", quillEditorArea.innerHTML.substring(0, 100));
+                 } else {
+                     console.error("Quill editor area (.ql-editor) NOT found inside #editor-container.");
+                 }
+             }, 100); // 100ms delay
+
+        } catch (error) {
+            console.error("Failed to initialize Quill:", error);
+        }
+    } else {
+        console.error("Div element with ID 'editor-container' not found for Quill initialization.");
+    }
+
+    // Initialize ClipboardJS *after* other initializations within DOMContentLoaded
+    try {
+        const clipboard = new ClipboardJS('.copy-code-button');
+
+        clipboard.on('success', function(e) {
+            console.info('ClipboardJS success:', e);
+            const button = e.trigger;
+            const originalText = button.textContent;
+            button.textContent = '已复制!';
+            button.disabled = true;
+             setTimeout(() => {
+                 button.textContent = originalText;
+                 button.disabled = false;
+             }, 1500);
+            e.clearSelection();
+            // Initialize ClipboardJS *after* other initializations within DOMContentLoaded
+            try {
+                const clipboard = new ClipboardJS('.copy-code-button');
+        
+                clipboard.on('success', function(e) {
+                    console.info('ClipboardJS success:', e);
+                    const button = e.trigger;
+                    const originalText = button.textContent;
+                    button.textContent = '已复制!';
+                    button.disabled = true;
+                     setTimeout(() => {
+                         button.textContent = originalText;
+                         button.disabled = false;
+                     }, 1500);
+                    e.clearSelection();
+                });
+        
+                clipboard.on('error', function(e) {
+                    console.error('ClipboardJS error:', e);
+                     const button = e.trigger;
+                     const originalText = button.textContent;
+                     button.textContent = '失败!';
+                     button.disabled = true;
+                     setTimeout(() => {
+                         button.textContent = originalText;
+                         button.disabled = false;
+                     }, 2000);
+                    showStatus('复制失败，请手动复制。', true);
+                });
+        
+                console.log("ClipboardJS initialized for .copy-code-button elements.");
+            } catch(error) {
+                 console.error("Failed to initialize ClipboardJS:", error);
+            }
+        }); // End of DOMContentLoaded listener
+
+        clipboard.on('error', function(e) {
+            console.error('ClipboardJS error:', e);
+             const button = e.trigger;
+             const originalText = button.textContent;
+             button.textContent = '失败!';
+             button.disabled = true;
+             setTimeout(() => {
+                 button.textContent = originalText;
+                 button.disabled = false;
+             }, 2000);
+            showStatus('复制失败，请手动复制。', true);
+        });
+
+        console.log("ClipboardJS initialized for .copy-code-button elements.");
+    } catch(error) {
+         console.error("Failed to initialize ClipboardJS:", error);
+    }
+}); // End of DOMContentLoaded listener

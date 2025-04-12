@@ -5,9 +5,35 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings" // Added for string manipulation
+	"time"    // Added for time duration parsing
 
 	"gopkg.in/yaml.v3"
 )
+
+// AccessWindowRule defines a rule for dynamic access window duration.
+type AccessWindowRule struct {
+	Type      []string `yaml:"type"`        // List of file extensions (lowercase)
+	MinSizeMB int      `yaml:"min_size_mb"` // Optional: Minimum file size in MB for this rule
+	MaxSizeMB int      `yaml:"max_size_mb"` // Optional: Maximum file size in MB for this rule
+	Duration  string   `yaml:"duration"`    // Access window duration (e.g., "5m", "1h")
+}
+
+// AccessWindowConfig holds settings for the short-lived access window.
+type AccessWindowConfig struct {
+	Enabled         bool               `yaml:"enabled"`          // Whether the access window feature is enabled
+	DefaultDuration string             `yaml:"default_duration"` // Default window duration if no rule matches
+	Rules           []AccessWindowRule `yaml:"rules"`            // List of rules for dynamic duration
+}
+
+// ExpirationConfig holds all expiration-related settings.
+type ExpirationConfig struct {
+	Enabled            bool               `yaml:"enabled"`             // Whether expiration feature is enabled at all
+	Mode               string             `yaml:"mode"`                // "forced" or "free"
+	DefaultDuration    string             `yaml:"default_duration"`    // Default primary expiration (e.g., "24h")
+	AvailableDurations []string           `yaml:"available_durations"` // Options for "free" mode
+	AccessWindow       AccessWindowConfig `yaml:"access_window"`       // Access window settings
+}
 
 type Config struct {
 	Application struct {
@@ -40,7 +66,8 @@ type Config struct {
 		EncryptionKeyLength int    `yaml:"encryption_key_length"`
 		EncryptionAlgorithm string `yaml:"encryption_algorithm"`
 	} `yaml:"security"`
-	Frontend struct {
+	Expiration ExpirationConfig `yaml:"expiration"` // Added expiration settings
+	Frontend   struct {
 		Theme        string `yaml:"theme"`
 		MatrixEffect bool   `yaml:"matrix_effect"`
 		Styles       struct {
@@ -185,6 +212,126 @@ func validateAndNormalizeConfig(config *Config) error {
 	if config.Security.EncryptionAlgorithm == "" {
 		config.Security.EncryptionAlgorithm = "AES-GCM"
 		log.Println("警告: 未指定加密算法，使用默认值: AES-GCM")
+	}
+
+	// Validate and set default expiration settings
+	if config.Expiration.Enabled {
+		if config.Expiration.Mode == "" {
+			config.Expiration.Mode = "free" // Default to free mode
+			log.Println("警告: 未指定有效期模式 (expiration.mode)，使用默认值: free")
+		}
+		if config.Expiration.Mode != "forced" && config.Expiration.Mode != "free" {
+			return fmt.Errorf("无效的有效期模式 (expiration.mode): %s，必须是 'forced' 或 'free'", config.Expiration.Mode)
+		}
+		if config.Expiration.DefaultDuration == "" {
+			config.Expiration.DefaultDuration = "24h" // Default to 24 hours
+			log.Println("警告: 未指定默认有效期 (expiration.default_duration)，使用默认值: 24h")
+		}
+		// Validate DefaultDuration format
+		if _, err := time.ParseDuration(config.Expiration.DefaultDuration); err != nil {
+			return fmt.Errorf("无效的默认有效期格式 (expiration.default_duration: %s): %w", config.Expiration.DefaultDuration, err)
+		}
+
+		// Validate AvailableDurations if in free mode
+		if config.Expiration.Mode == "free" {
+			if len(config.Expiration.AvailableDurations) == 0 {
+				config.Expiration.AvailableDurations = []string{"1h", "24h", "168h"} // Default options
+				log.Println("警告: 未指定可用有效期选项 (expiration.available_durations)，使用默认值: [1h, 24h, 168h]")
+			}
+			for _, dur := range config.Expiration.AvailableDurations {
+				if _, err := time.ParseDuration(dur); err != nil {
+					return fmt.Errorf("无效的可用有效期格式 (expiration.available_durations: %s): %w", dur, err)
+				}
+			}
+		}
+
+		// Validate Access Window settings if enabled
+		if config.Expiration.AccessWindow.Enabled {
+			if config.Expiration.AccessWindow.DefaultDuration == "" {
+				config.Expiration.AccessWindow.DefaultDuration = "10m" // Default access window
+				log.Println("警告: 未指定默认访问窗口期 (expiration.access_window.default_duration)，使用默认值: 10m")
+			}
+			if _, err := time.ParseDuration(config.Expiration.AccessWindow.DefaultDuration); err != nil {
+				return fmt.Errorf("无效的默认访问窗口期格式 (expiration.access_window.default_duration: %s): %w", config.Expiration.AccessWindow.DefaultDuration, err)
+			}
+			// Validate rules
+			for i, rule := range config.Expiration.AccessWindow.Rules {
+				if len(rule.Type) == 0 {
+					return fmt.Errorf("访问窗口规则 %d 缺少 'type' 字段", i)
+				}
+				if rule.Duration == "" {
+					return fmt.Errorf("访问窗口规则 %d (类型: %v) 缺少 'duration' 字段", i, rule.Type)
+				}
+				if _, err := time.ParseDuration(rule.Duration); err != nil {
+					return fmt.Errorf("无效的访问窗口规则 %d (类型: %v) 持续时间格式 (duration: %s): %w", i, rule.Type, rule.Duration, err)
+				}
+				// Normalize file types to lowercase
+				for j, ext := range rule.Type {
+					config.Expiration.AccessWindow.Rules[i].Type[j] = strings.ToLower(ext)
+				}
+			}
+		}
+	} else {
+		log.Println("信息: 有效期功能未启用 (expiration.enabled is false or not set)")
+	}
+	if config.Expiration.Enabled {
+		if config.Expiration.Mode == "" {
+			config.Expiration.Mode = "free" // Default to free mode
+			log.Println("警告: 未指定有效期模式 (expiration.mode)，使用默认值: free")
+		}
+		if config.Expiration.Mode != "forced" && config.Expiration.Mode != "free" {
+			return fmt.Errorf("无效的有效期模式 (expiration.mode): %s，必须是 'forced' 或 'free'", config.Expiration.Mode)
+		}
+		if config.Expiration.DefaultDuration == "" {
+			config.Expiration.DefaultDuration = "24h" // Default to 24 hours
+			log.Println("警告: 未指定默认有效期 (expiration.default_duration)，使用默认值: 24h")
+		}
+		// Validate DefaultDuration format
+		if _, err := time.ParseDuration(config.Expiration.DefaultDuration); err != nil {
+			return fmt.Errorf("无效的默认有效期格式 (expiration.default_duration: %s): %w", config.Expiration.DefaultDuration, err)
+		}
+
+		// Validate AvailableDurations if in free mode
+		if config.Expiration.Mode == "free" {
+			if len(config.Expiration.AvailableDurations) == 0 {
+				config.Expiration.AvailableDurations = []string{"1h", "24h", "168h"} // Default options
+				log.Println("警告: 未指定可用有效期选项 (expiration.available_durations)，使用默认值: [1h, 24h, 168h]")
+			}
+			for _, dur := range config.Expiration.AvailableDurations {
+				if _, err := time.ParseDuration(dur); err != nil {
+					return fmt.Errorf("无效的可用有效期格式 (expiration.available_durations: %s): %w", dur, err)
+				}
+			}
+		}
+
+		// Validate Access Window settings if enabled
+		if config.Expiration.AccessWindow.Enabled {
+			if config.Expiration.AccessWindow.DefaultDuration == "" {
+				config.Expiration.AccessWindow.DefaultDuration = "10m" // Default access window
+				log.Println("警告: 未指定默认访问窗口期 (expiration.access_window.default_duration)，使用默认值: 10m")
+			}
+			if _, err := time.ParseDuration(config.Expiration.AccessWindow.DefaultDuration); err != nil {
+				return fmt.Errorf("无效的默认访问窗口期格式 (expiration.access_window.default_duration: %s): %w", config.Expiration.AccessWindow.DefaultDuration, err)
+			}
+			// Validate rules
+			for i, rule := range config.Expiration.AccessWindow.Rules {
+				if len(rule.Type) == 0 {
+					return fmt.Errorf("访问窗口规则 %d 缺少 'type' 字段", i)
+				}
+				if rule.Duration == "" {
+					return fmt.Errorf("访问窗口规则 %d (类型: %v) 缺少 'duration' 字段", i, rule.Type)
+				}
+				if _, err := time.ParseDuration(rule.Duration); err != nil {
+					return fmt.Errorf("无效的访问窗口规则 %d (类型: %v) 持续时间格式 (duration: %s): %w", i, rule.Type, rule.Duration, err)
+				}
+				// Normalize file types to lowercase
+				for j, ext := range rule.Type {
+					config.Expiration.AccessWindow.Rules[i].Type[j] = strings.ToLower(ext)
+				}
+			}
+		}
+	} else {
+		log.Println("信息: 有效期功能未启用 (expiration.enabled is false or not set)")
 	}
 
 	// 规范化路径（确保所有路径都是绝对路径）

@@ -161,7 +161,7 @@ func GetShortLink(shortCode string) (string, bool) {
 }
 
 // StoreMetadata 存储元数据，包括可选的密码保护
-func StoreMetadata(metadata *StoredMetadata) error {
+func StoreMetadata(id string, metadata *StoredMetadata) error {
 	manager := GetStorageManager()
 	if manager == nil {
 		return fmt.Errorf("存储管理器未初始化")
@@ -172,7 +172,8 @@ func StoreMetadata(metadata *StoredMetadata) error {
 		return fmt.Errorf("创建数据目录失败: %w", err)
 	}
 
-	filePath := filepath.Join(dataDir, metadata.ID+".json")
+	// ID is passed as a parameter, not part of the metadata struct itself
+	filePath := filepath.Join(dataDir, id+".json")
 	jsonData, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return fmt.Errorf("序列化元数据失败: %w", err)

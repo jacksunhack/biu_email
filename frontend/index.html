@@ -7,6 +7,20 @@
     <meta name="theme-color" content="#007bff">
     <title>Biu~ 阅后即焚 (客户端加密版)</title>
     <link rel="stylesheet" href="/static/style.css">
+    <!-- Highlight.js Theme (Monokai) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/monokai.min.css">
+    <!-- Marked.js (Markdown Parser) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- DOMPurify (HTML Sanitizer) -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
+    <!-- Highlight.js Core -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- Quill Editor -->
+    <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+    <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+    <!-- Clipboard.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.11/clipboard.min.js"></script>
+
 </head>
 <body>
     <div class="container">
@@ -22,9 +36,11 @@
             <div id="textMode">
                 <div class="form-group">
                     <label for="message">输入文本:</label>
-                    <textarea id="message" rows="8" placeholder="在此输入你的秘密消息..."></textarea>
+                    <!-- Quill Editor Container -->
+                    <div id="editor-container" style="min-height: 150px;"></div>
+                    <!-- Original textarea is replaced by the div above -->
                 </div>
-            </div>
+               </div>
             <div id="fileMode" class="hidden">
                 <div class="form-group">
                     <label for="fileInput">选择文件:</label>
@@ -37,10 +53,16 @@
                 <label>
                     <input type="checkbox" id="enablePassword"> 启用访问密码保护
                 </label>
-                <div id="passwordInputGroup" style="display: none;">
+                <div id="passwordInputGroup" class="hidden"> <!-- Removed inline style, added hidden class -->
                     <input type="password" id="accessPassword" placeholder="设置访问密码（至少6个字符）" class="form-control">
                 </div>
-            </div>
+               </div>
+            
+               <div id="expiration-section" class="form-group hidden"> <!-- Initially hidden -->
+                <label for="expirationDuration">设置有效期:</label>
+                <input type="text" id="expirationDuration" placeholder="例如: 30m, 1h, 24h, 7d" class="form-control">
+                <small>留空则使用服务器默认值。支持单位: m(分钟), h(小时), d(天)。</small>
+               </div>
 
             <div class="button-container">
                 <button type="submit" id="submitBtn">加密并生成链接</button>
