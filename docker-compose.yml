@@ -18,16 +18,23 @@ services:
       - ./biu_email_data/temp-files:/app/temp-files:rw # Added :rw for consistency, adjust if needed
       - ./biu_email_data/logs:/app/logs:rw             # Added :rw for consistency, adjust if needed
       - ./biu_email_data/storage:/app/storage:rw
-      - ./biu_email_data/uploads:/app/uploads
+
+      - ./biu_email_data/uploads:/app/uploads
       # Optional: If the application needs to write a DB file directly in /app
       # - ./biu_email_data/biu_email.db:/app/biu_email.db:rw # Example if db is separate
+ports:
+  # Map host port 3003 to container port 3003 (defined in config.yaml and exposed in Dockerfile)
+  - "3003:3003"
 
-    ports:
-      # Map host port 3003 to container port 3003 (defined in config.yaml and exposed in Dockerfile)
-      - "3003:3003"
+# IMPORTANT: 权限问题说明
+# 如果遇到卷挂载的权限错误 (permission denied)，可能是因为宿主机上 ./biu_email_data 目录的所有者
+# 与容器内运行应用的用户 (biu) 的 UID/GID 不匹配。
+# 你可以通过取消下面的注释，并将 YOUR_HOST_UID 和 YOUR_HOST_GID 替换为
+# 宿主机上拥有 ./biu_email_data 目录权限的用户的实际 UID 和 GID 来解决。
+# 在 Linux/macOS 上，通常使用 `id -u` 和 `id -g` 命令查找。
+# 在 Windows (WSL2) 上，可以在 WSL 终端中进入项目目录，运行 `ls -ldn biu_email_data` 查看。
+# user: "YOUR_HOST_UID:YOUR_HOST_GID" # 例如: user: "1000:1000" 或 user: "biu:biu" (如果宿主机和容器用户名/组名一致)
 
-    # If you need to run as a specific host user to match volume permissions:
-    # user: "YOUR_HOST_UID:YOUR_HOST_GID" # Replace with the UID/GID owning ./biu_email_data
 
     # Optional: Define a network if needed
     # networks:

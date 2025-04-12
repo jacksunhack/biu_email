@@ -1,161 +1,612 @@
-/* --- Rounded Corners --- */
+/* --- 基础圆角样式 --- */
 
-/* Inputs and Textareas */
+/* 输入框和文本区域 */
 input[type="text"],
 input[type="password"],
 input[type="file"],
 textarea,
-select { /* Added select for consistency */
-    border-radius: 6px;
-    /* Optionally add border if needed, e.g., border: 1px solid #ccc; */
+select { 
+    border-radius: 12px; /* 增加圆角半径 */
+    border: 2px solid #ffb6c1; /* 可爱的粉色边框 */
+    transition: all 0.3s ease; /* 平滑过渡效果 */
 }
 
-/* Buttons */
+/* 输入框焦点状态 */
+input[type="text"]:focus,
+input[type="password"]:focus,
+textarea:focus,
+select:focus {
+    outline: none;
+    border-color: #ff8fa3; /* 更深的粉色 */
+    box-shadow: 0 0 8px rgba(255, 182, 193, 0.5); /* 柔和的粉色阴影 */
+}
+
+/* 按钮 */
 button,
-.button { /* Target button elements and elements with class 'button' */
-    border-radius: 6px;
+.button { 
+    border-radius: 12px; /* 更圆润的按钮 */
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* 轻微的阴影效果 */
+    transition: all 0.3s ease; /* 平滑过渡 */
+    font-weight: 600; /* 稍微加粗字体 */
 }
 
-/* Containers and Display Boxes */
-.container, /* Main container */
+button:hover,
+.button:hover {
+    transform: translateY(-2px); /* 悬停时轻微上浮 */
+    box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15); /* 增强阴影 */
+}
+
+/* 容器和显示框 */
+.container,
 #result,
 #content-area,
 #decrypted-content,
-#password-prompt, /* Password prompt box */
+#password-prompt,
 #file-preview-area,
-.form-group { /* Grouping elements */
-    border-radius: 6px;
-    /* Note: You might only want border-radius on some of these.
-       Adjust the selector list as needed.
-       Also, some might need 'overflow: hidden;' if content overflows the rounded corners. */
+.form-group { 
+    border-radius: 16px; /* 更大的圆角 */
+    overflow: hidden; /* 确保内容不溢出圆角 */
 }
 
-/* Removed commented out EasyMDE styles */
-
-/* Code blocks within rendered content */
+/* 代码块 */
 #decrypted-content pre {
-    border-radius: 6px;
-    overflow: hidden; /* Ensure background respects radius */
+    border-radius: 12px;
+    overflow: hidden;
 }
+
 #decrypted-content pre code {
-   border-radius: 6px; /* Apply to code element too if needed */
+    border-radius: 12px;
 }
 
-/* Copy button on code blocks */
+/* 复制按钮 */
 .copy-code-button {
-    border-radius: 4px; /* Slightly smaller radius for small button */
+    border-radius: 8px;
 }
 
-/* --- End Rounded Corners --- */
+/* --- 主体样式 --- */
 
+body { 
+    font-family: 'Nunito', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+    line-height: 1.6; 
+    padding: 20px; 
+    max-width: 700px; 
+    margin: auto; 
+    background-color: #fef6f8; /* 柔和的粉色背景 */
+    color: #5a5a5a; /* 更柔和的文字颜色 */
+    background-image: url('data:image/svg+xml;utf8,<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="1" fill="%23ffccd5" opacity="0.3"/></svg>');
+    /* 添加可爱的点点背景 */
+}
 
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 700px; margin: auto; background-color: #f8f9fa; color: #343a40; }
-.container { background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-h1, h2 { color: #495057; text-align: center; margin-bottom: 1.5rem;}
-h1 { font-size: 2rem;}
-h2 { font-size: 1.5rem; color: #6c757d;}
-textarea, input[type="file"], input[type="text"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; font-size: 1rem; }
-textarea { min-height: 120px; resize: vertical; }
-button { background-color: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-right: 10px; transition: background-color 0.2s ease-in-out; }
-button:hover { background-color: #0056b3; }
-#switchType { background-color: #ffc107; color: #212529;}
-#switchType:hover { background-color: #e0a800; }
-#result, #content-area, #status { margin-top: 20px; padding: 15px; border-radius: 4px; font-size: 0.95rem; }
-#result { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; word-wrap: break-word; }
-#result a { color: #0c5460; font-weight: bold; text-decoration: none; }
-#result a:hover { text-decoration: underline; }
-#content-area { background-color: #e9ecef; border: 1px solid #dee2e6; color: #495057; white-space: pre-wrap; word-wrap: break-word; min-height: 100px; }
-#status { background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; }
-#error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
-.hidden { display: none; }
-label { display: block; margin-bottom: 5px; font-weight: 500; color: #495057;}
-.form-group { margin-bottom: 1rem; }
-.button-container { display: flex; justify-content: flex-start; align-items: center; margin-top: 1.5rem; }
-.loader { border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #007bff; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; margin-left: 10px;}
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6; font-size: 0.9em; color: #6c757d; }
-footer a { color: #007bff; text-decoration: none; }
-footer a:hover { text-decoration: underline; }
+.container { 
+    background: #ffffff; 
+    padding: 30px; 
+    border-radius: 20px; /* 更大的圆角 */
+    box-shadow: 0 8px 20px rgba(255, 182, 193, 0.15); /* 粉色阴影 */
+    border: 1px solid #ffe0e6; /* 淡粉色边框 */
+}
+
+h1, h2 { 
+    color: #ff6b88; /* 可爱的粉红色标题 */
+    text-align: center; 
+    margin-bottom: 1.5rem;
+}
+
+h1 { 
+    font-size: 2.2rem;
+    text-shadow: 1px 1px 2px rgba(255, 107, 136, 0.2); /* 文字阴影 */
+    position: relative;
+    display: inline-block;
+    width: 100%;
+}
+
+h1:before, h1:after {
+    content: "✨"; /* 添加星星装饰 */
+    display: inline-block;
+    margin: 0 10px;
+    color: #ffb6c1;
+}
+
+h2 { 
+    font-size: 1.5rem; 
+    color: #ff8fa3;
+}
+
+textarea, 
+input[type="file"], 
+input[type="text"] { 
+    width: 100%; 
+    padding: 12px; 
+    margin-bottom: 15px; 
+    border: 2px solid #ffccd5; /* 淡粉色边框 */
+    border-radius: 12px; 
+    box-sizing: border-box; 
+    font-size: 1rem; 
+    background-color: #fff9fa; /* 非常淡的粉色背景 */
+}
+
+textarea { 
+    min-height: 120px; 
+    resize: vertical; 
+}
+
+button { 
+    background-color: #ff8fa3; /* 粉色按钮 */
+    color: white; 
+    padding: 12px 20px; 
+    border: none; 
+    border-radius: 12px; 
+    cursor: pointer; 
+    font-size: 1rem; 
+    margin-right: 10px; 
+    transition: all 0.3s ease; 
+    box-shadow: 0 4px 8px rgba(255, 143, 163, 0.3); /* 粉色阴影 */
+}
+
+button:hover { 
+    background-color: #ff7a93; /* 深一点的粉色 */
+    transform: translateY(-2px); /* 悬停时上浮效果 */
+}
+
+#switchType { 
+    background-color: #a5d8ff; /* 蓝色按钮 */
+    color: #2b5876; 
+    box-shadow: 0 4px 8px rgba(165, 216, 255, 0.3); /* 蓝色阴影 */
+}
+
+#switchType:hover { 
+    background-color: #8ecaff; /* 深一点的蓝色 */
+}
+
+#result, 
+#content-area, 
+#status { 
+    margin-top: 20px; 
+    padding: 18px; 
+    border-radius: 12px; 
+    font-size: 0.95rem; 
+    animation: fadeIn 0.5s ease; /* 添加淡入动画 */
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+#result { 
+    background-color: #e0f7fa; /* 淡蓝色背景 */
+    border: 1px solid #b2ebf2; 
+    color: #00838f; 
+    word-wrap: break-word; 
+}
+
+#result a { 
+    color: #0277bd; 
+    font-weight: bold; 
+    text-decoration: none; 
+    transition: all 0.2s ease;
+}
+
+#result a:hover { 
+    text-decoration: underline; 
+    color: #01579b;
+}
+
+#content-area { 
+    background-color: #f5f5f5; 
+    border: 1px solid #e0e0e0; 
+    color: #424242; 
+    white-space: pre-wrap; 
+    word-wrap: break-word; 
+    min-height: 100px; 
+}
+
+#status { 
+    background-color: #fff8e1; /* 淡黄色背景 */
+    border: 1px solid #ffecb3; 
+    color: #ff8f00; 
+}
+
+#error { 
+    background-color: #ffebee; /* 淡红色背景 */
+    border: 1px solid #ffcdd2; 
+    color: #c62828; 
+    padding: 15px;
+    border-radius: 12px;
+    margin-top: 15px;
+    animation: shake 0.5s ease; /* 添加摇晃动画 */
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+    20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+.hidden { 
+    display: none; 
+}
+
+label { 
+    display: block; 
+    margin-bottom: 8px; 
+    font-weight: 600; 
+    color: #ff8fa3; /* 粉色标签 */
+}
+
+.form-group { 
+    margin-bottom: 1.2rem; 
+    background-color: #fff; /* 白色背景 */
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04); /* 轻微阴影 */
+    transition: all 0.3s ease;
+}
+
+.form-group:hover {
+    box-shadow: 0 4px 12px rgba(255, 182, 193, 0.15); /* 悬停时增强阴影 */
+}
+
+.button-container { 
+    display: flex; 
+    justify-content: flex-start; 
+    align-items: center; 
+    margin-top: 1.5rem; 
+}
+
+.loader { 
+    border: 4px solid #f3f3f3; 
+    border-radius: 50%; 
+    border-top: 4px solid #ff8fa3; /* 粉色加载指示器 */
+    width: 24px; 
+    height: 24px; 
+    animation: spin 1s linear infinite; 
+    display: inline-block; 
+    vertical-align: middle; 
+    margin-left: 10px;
+}
+
+@keyframes spin { 
+    0% { transform: rotate(0deg); } 
+    100% { transform: rotate(360deg); } 
+}
+
+footer { 
+    text-align: center; 
+    margin-top: 30px; 
+    padding-top: 20px; 
+    border-top: 1px solid #ffccd5; /* 粉色分隔线 */
+    font-size: 0.9em; 
+    color: #ff8fa3; /* 粉色文字 */
+}
+
+footer a { 
+    color: #ff6b88; 
+    text-decoration: none; 
+    transition: all 0.2s ease;
+    font-weight: 600;
+}
+
+footer a:hover { 
+    text-decoration: underline; 
+    color: #ff5277;
+}
 
 .password-protection {
     margin: 15px 0;
-    padding: 15px;
-    border: 1px solid #e9ecef;
-    border-radius: 4px;
-    background-color: #f8f9fa;
+    padding: 18px;
+    border: 2px solid #e3f2fd; /* 淡蓝色边框 */
+    border-radius: 12px;
+    background-color: #f5f9ff; /* 淡蓝色背景 */
+    transition: all 0.3s ease;
+}
+
+.password-protection:hover {
+    box-shadow: 0 4px 12px rgba(165, 216, 255, 0.2); /* 蓝色阴影 */
 }
 
 .password-protection label {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
+    gap: 10px;
+    margin-bottom: 12px;
     cursor: pointer;
+    color: #4a6fa5; /* 蓝色文字 */
 }
 
 .password-protection input[type="checkbox"] {
     margin: 0;
     cursor: pointer;
+    width: 18px;
+    height: 18px;
+    accent-color: #ff8fa3; /* 粉色复选框 */
 }
 
 #passwordInputGroup {
-    margin-top: 10px;
+    margin-top: 12px;
     max-width: 100%;
+    animation: slideDown 0.3s ease; /* 滑动动画 */
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 #accessPassword, #contentPassword {
     width: 100%;
     max-width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
+    padding: 12px 15px;
+    border: 2px solid #bbdefb; /* 蓝色边框 */
+    border-radius: 12px;
     font-size: 14px;
     box-sizing: border-box;
+    background-color: #f8fbff; /* 淡蓝色背景 */
+    transition: all 0.3s ease;
+}
+
+#accessPassword:focus, #contentPassword:focus {
+    border-color: #90caf9;
+    box-shadow: 0 0 8px rgba(144, 202, 249, 0.5); /* 蓝色阴影 */
+    outline: none;
 }
 
 .password-prompt {
     background-color: #f8f9fa;
-    border: 1px solid #dee2e6;
-    border-radius: 4px;
-    padding: 20px;
+    border: 2px solid #e3f2fd; /* 蓝色边框 */
+    border-radius: 16px;
+    padding: 25px;
     text-align: center;
-    margin: 20px auto;
+    margin: 25px auto;
     max-width: 400px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.08); /* 轻微阴影 */
+    animation: bounceIn 0.5s ease; /* 弹入动画 */
+}
+
+@keyframes bounceIn {
+    0% { transform: scale(0.8); opacity: 0; }
+    70% { transform: scale(1.05); }
+    100% { transform: scale(1); opacity: 1; }
 }
 
 .password-prompt h3 {
-    margin-bottom: 15px;
-    color: #333;
-    font-size: 18px;
+    margin-bottom: 18px;
+    color: #4a6fa5; /* 蓝色标题 */
+    font-size: 20px;
 }
 
 .password-prompt .form-group {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     align-items: center;
 }
 
 .password-prompt input[type="password"] {
     width: 100%;
     max-width: 300px;
-    padding: 8px 12px;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
+    padding: 12px 15px;
+    border: 2px solid #bbdefb; /* 蓝色边框 */
+    border-radius: 12px;
     margin: 0 auto;
+    font-size: 16px;
+    transition: all 0.3s ease;
+}
+
+.password-prompt input[type="password"]:focus {
+    border-color: #90caf9;
+    box-shadow: 0 0 8px rgba(144, 202, 249, 0.5); /* 蓝色阴影 */
+    outline: none;
 }
 
 .password-prompt button {
-    padding: 8px 16px;
-    background-color: #007bff;
+    padding: 10px 20px;
+    background-color: #ff8fa3; /* 粉色按钮 */
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 12px;
     cursor: pointer;
-    font-size: 14px;
-    margin-top: 10px;
+    font-size: 16px;
+    margin-top: 12px;
+    box-shadow: 0 4px 8px rgba(255, 143, 163, 0.3); /* 粉色阴影 */
+    transition: all 0.3s ease;
 }
 
 .password-prompt button:hover {
-    background-color: #0056b3;
+    background-color: #ff7a93; /* 深一点的粉色 */
+    transform: translateY(-2px); /* 悬停时上浮效果 */
+}
+
+/* 确保图片在解密内容区域是响应式的 */
+#decrypted-content img {
+    max-width: 100%; /* 如果图片宽度大于容器则缩小 */
+    height: auto;    /* 保持宽高比 */
+    display: block;  /* 防止图片下方的额外空间 */
+    margin: 12px 0;  /* 添加一些垂直间距 */
+    border-radius: 8px; /* 圆角图片 */
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1); /* 轻微阴影 */
+}
+
+/* Quill编辑器自定义样式 */
+#editor-container {
+    border: 2px solid #ffccd5; /* 粉色边框 */
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 15px;
+    transition: all 0.3s ease;
+}
+
+#editor-container:focus-within {
+    border-color: #ff8fa3; /* 更深的粉色 */
+    box-shadow: 0 0 8px rgba(255, 182, 193, 0.5); /* 柔和的粉色阴影 */
+}
+
+.ql-toolbar {
+    border-bottom: 1px solid #ffccd5 !important;
+    background-color: #fff9fa !important; /* 非常淡的粉色背景 */
+}
+
+.ql-container {
+    background-color: #ffffff;
+}
+
+/* 提交按钮特殊样式 */
+#submitBtn {
+    background-color: #ff6b88; /* 更深的粉色 */
+    font-weight: 600;
+    padding: 12px 24px;
+    box-shadow: 0 4px 10px rgba(255, 107, 136, 0.4); /* 更明显的阴影 */
+}
+
+#submitBtn:hover {
+    background-color: #ff5277;
+    transform: translateY(-3px); /* 更明显的上浮效果 */
+    box-shadow: 0 6px 12px rgba(255, 107, 136, 0.5);
+}
+
+/* 有效期设置区域 */
+#expiration-section {
+    background-color: #fff9fa; /* 非常淡的粉色背景 */
+    border: 2px solid #ffccd5; /* 淡粉色边框 */
+    border-radius: 12px;
+    padding: 15px;
+    margin-top: 15px;
+    animation: slideDown 0.3s ease;
+}
+
+#expiration-section small {
+    color: #ff8fa3; /* 粉色提示文字 */
+    font-style: italic;
+    display: block;
+    margin-top: 8px;
+}
+
+/* 文件上传区域美化 */
+#fileMode {
+    transition: all 0.3s ease;
+}
+
+#fileInput {
+    background-color: #fff9fa; /* 非常淡的粉色背景 */
+    border: 2px dashed #ffccd5; /* 虚线边框 */
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+/* 新添加的可爱描述样式 */
+.cute-description {
+    text-align: center;
+    color: #ff8fa3;
+    font-size: 1.1rem;
+    margin-bottom: 25px;
+    animation: fadeIn 0.8s ease;
+}
+
+.cute-description p {
+    background-color: #fff5f7;
+    display: inline-block;
+    padding: 8px 15px;
+    border-radius: 20px;
+    box-shadow: 0 3px 6px rgba(255, 143, 163, 0.2);
+}
+
+/* 文件上传区域美化 */
+.file-upload-wrapper {
+    border: 2px dashed #ffccd5;
+    border-radius: 12px;
+    padding: 25px;
+    text-align: center;
+    background-color: #fff9fa;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    margin-bottom: 10px;
+}
+
+.file-upload-wrapper:hover {
+    border-color: #ff8fa3;
+    background-color: #fff5f7;
+    transform: translateY(-2px);
+}
+
+.file-upload-info {
+    color: #ff8fa3;
+    margin-top: 10px;
+    font-size: 0.9rem;
+}
+
+/* 页脚装饰 */
+.footer-decoration {
+    margin-top: 15px;
+    font-size: 1.5rem;
+    letter-spacing: 15px;
+    animation: bounce 2s infinite alternate;
+}
+
+@keyframes bounce {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(-5px); }
+}
+
+/* 确保文件输入框在包装器内正确显示 */
+.file-upload-wrapper {
+    position: relative;
+    min-height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 15px;
+}
+
+.file-upload-wrapper input[type="file"] {
+    opacity: 0.01; /* 几乎透明但仍可点击 */
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    z-index: 10;
+}
+
+/* 文件大小警告样式 */
+#fileSizeWarning {
+    color: #ff5277;
+    font-weight: 600;
+    display: block;
+    margin-top: 8px;
+    animation: shake 0.5s ease;
+}
+
+#fileInput:hover {
+    border-color: #ff8fa3;
+    background-color: #fff5f7;
+}
+
+/* 链接结果区域美化 */
+#link {
+    display: inline-block;
+    padding: 8px 15px;
+    background-color: #e3f2fd;
+    border-radius: 8px;
+    margin: 10px 0;
+    word-break: break-all;
+    transition: all 0.3s ease;
+}
+
+#link:hover {
+    background-color: #bbdefb;
+}
+
+/* 小提示文字样式 */
+small {
+    color: #888;
+    font-size: 0.85em;
+}
+
+/* 密码提示文字 */
+#passwordNote {
+    color: #ff8fa3; /* 粉色提示 */
+    font-weight: 500;
 }

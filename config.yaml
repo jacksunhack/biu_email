@@ -13,6 +13,9 @@ server:
     - http://localhost:3003 # 本地开发环境
     - http://127.0.0.1:3003 # 本地开发环境
     # - https://your-frontend-domain.com # 生产环境前端域名
+security: # 添加 security 部分以消除警告
+  encryption_key_length: 256
+  encryption_algorithm: "AES-GCM"
 paths: # Corrected indentation
   # 存储元数据 JSON 文件的目录 (相对于 /app)
   data_storage_dir: storage/data
@@ -63,9 +66,9 @@ expiration:
       - type: ["xls", "xlsx"]
         duration: "1h"
       - type: ["ppt", "pptx"]
-        duration: "1h"  
+        duration: "1h"
       - type: ["mp3", "wav"]
-        duration: "1h"  
+        duration: "1h"
       - type: ["avi", "mkv"]
         duration: "1h"
       - type: ["exe", "bin"]
@@ -82,24 +85,5 @@ expiration:
         duration: "1h"
       - type: ["log"]
         duration: "1h"
-      - type: ["mp4", "mov"]
-        min_size_mb: 100
-        duration: "30m"
-      - type: ["txt", "pdf"]
-        max_size_mb: 50
-        duration: "1h"
-      - type: ["zip", "tar"]
-        min_size_mb: 200
-        max_size_mb: 500
-        duration: "2h"
-      - type: ["doc", "docx"]
-        duration: "1h"
-      - type: ["xls", "xlsx"]
-        duration: "1h"
-      - type: ["ppt", "pptx"]
-        duration: "1h"
-      - type: ["mp3", "wav"]
-        duration: "1h"
-
-
-
+# Removed frontend, api_endpoints, messages, ui_text sections
+# Removed duplicate access_window rules
